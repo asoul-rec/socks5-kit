@@ -1,0 +1,1296 @@
+{
+  "environment": {
+    "python": "3.14.8 (main, Oct  3 2026, 01:04:31) [Clang 22.1.3 ]",
+    "platform": "Linux-6.12.111+deb13-cloud-amd64-x86_64-with-glibc2.41",
+    "cpu": "Intel(R) N100",
+    "available_cpus": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "loop": "_UnixSelectorEventLoop",
+    "copy_block_bytes": 65536,
+    "pipe_capacity_bytes": 65536,
+    "default_socket_buffers_bytes": {
+      "send": 16384,
+      "receive": 131072
+    },
+    "splice_byte_budget": 262144,
+    "splice_call_budget": 8,
+    "lag_timer_ms": 5,
+    "payload_validation": "byte counters plus first/last 64 bytes per received chunk",
+    "baseline_fairness": "same byte/call budgets; 64 KiB recv/sendall",
+    "started_at": "2026-10-07T10:37:48.254919-05:00",
+    "loadavg_before": [
+      0.1181640625,
+      0.1298828125,
+      0.05029296875
+    ],
+    "cpu_assignments": {
+      "relay": 0,
+      "peer": 1,
+      "driver": 2
+    }
+  },
+  "config": {
+    "seconds": 2.0,
+    "warmup_seconds": 0.25,
+    "repeats": 3,
+    "concurrency": [
+      1,
+      8,
+      32
+    ],
+    "directions": [
+      "upload",
+      "download",
+      "duplex"
+    ],
+    "seed": 20261007
+  },
+  "cases": [
+    {
+      "direction": "download",
+      "connections": 1,
+      "backend": "copy",
+      "repeats": 3,
+      "gbit_per_second": {
+        "median": 5.206270752610185,
+        "min": 4.716087052023601,
+        "max": 5.680937802416248
+      },
+      "mib_per_second": {
+        "median": 620.6358376276713,
+        "min": 562.2013869313719,
+        "max": 677.2205594082175
+      },
+      "relay_cpu_percent": {
+        "median": 99.16216188409891,
+        "min": 97.96220558084808,
+        "max": 99.6315546106214
+      },
+      "relay_cpu_seconds_per_gib": {
+        "median": 1.6360971702416234,
+        "min": 1.5064916518545723,
+        "max": 1.7842947535637033
+      },
+      "lag_p99_ms": {
+        "median": 2.0021279881348164,
+        "min": 0.7276750015989819,
+        "max": 3.3415779887491226
+      },
+      "lag_max_ms": {
+        "median": 3.479648001075475,
+        "min": 3.1868249989202013,
+        "max": 5.74063898852728
+      },
+      "driver_cpu_seconds": {
+        "median": 1.9363169999999883,
+        "min": 1.9357689999999934,
+        "max": 1.964105
+      },
+      "peer_cpu_seconds": {
+        "median": 1.330797000000004,
+        "min": 1.3303049999999992,
+        "max": 1.3680090000000007
+      },
+      "max_rss_kib": {
+        "median": 62208,
+        "min": 56936,
+        "max": 62208
+      }
+    },
+    {
+      "direction": "download",
+      "connections": 1,
+      "backend": "direct",
+      "repeats": 3,
+      "gbit_per_second": {
+        "median": 8.07278351054035,
+        "min": 6.189710891539065,
+        "max": 8.158476548184673
+      },
+      "mib_per_second": {
+        "median": 962.350786988777,
+        "min": 737.8710379051047,
+        "max": 972.566193125805
+      },
+      "relay_cpu_percent": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "relay_cpu_seconds_per_gib": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "driver_cpu_seconds": {
+        "median": 2.0043419999999976,
+        "min": 2.0012290000000093,
+        "max": 2.0315299999999894
+      },
+      "peer_cpu_seconds": {
+        "median": 1.64452,
+        "min": 1.6436280000000068,
+        "max": 1.6667400000000043
+      }
+    },
+    {
+      "direction": "download",
+      "connections": 1,
+      "backend": "splice",
+      "repeats": 3,
+      "gbit_per_second": {
+        "median": 6.336254346264832,
+        "min": 5.907333633529647,
+        "max": 7.367511573986978
+      },
+      "mib_per_second": {
+        "median": 755.3403790312806,
+        "min": 704.2090455925044,
+        "max": 878.2758204921458
+      },
+      "relay_cpu_percent": {
+        "median": 45.80470653224767,
+        "min": 45.47133086599157,
+        "max": 49.220774380817595
+      },
+      "relay_cpu_seconds_per_gib": {
+        "median": 0.620965339482787,
+        "min": 0.5738752199475808,
+        "max": 0.6612048382252559
+      },
+      "lag_p99_ms": {
+        "median": 4.281313975980083,
+        "min": 1.458533957020336,
+        "max": 4.9994310018064425
+      },
+      "lag_max_ms": {
+        "median": 5.59180397772252,
+        "min": 2.6712239789503656,
+        "max": 9.244334001778043
+      },
+      "driver_cpu_seconds": {
+        "median": 2.005804999999995,
+        "min": 2.0037650000000014,
+        "max": 2.0627250000000004
+      },
+      "peer_cpu_seconds": {
+        "median": 1.5002030000000133,
+        "min": 1.4614199999999897,
+        "max": 1.519454999999999
+      },
+      "max_rss_kib": {
+        "median": 63428,
+        "min": 56936,
+        "max": 63428
+      }
+    },
+    {
+      "direction": "download",
+      "connections": 8,
+      "backend": "copy",
+      "repeats": 3,
+      "gbit_per_second": {
+        "median": 3.6411602997200934,
+        "min": 3.4221552720266395,
+        "max": 4.1214098689533465
+      },
+      "mib_per_second": {
+        "median": 434.06013247014204,
+        "min": 407.95269871075624,
+        "max": 491.31034242550686
+      },
+      "relay_cpu_percent": {
+        "median": 99.78404797916663,
+        "min": 98.51919362535686,
+        "max": 99.8271584433646
+      },
+      "relay_cpu_seconds_per_gib": {
+        "median": 2.3241861374887955,
+        "min": 2.0806199548201967,
+        "max": 2.504674327528172
+      },
+      "lag_p99_ms": {
+        "median": 9.298434000925226,
+        "min": 4.866824001510395,
+        "max": 14.996287000826669
+      },
+      "lag_max_ms": {
+        "median": 10.37557000177003,
+        "min": 5.172260001359064,
+        "max": 21.819882000841062
+      },
+      "driver_cpu_seconds": {
+        "median": 2.0818319999999986,
+        "min": 2.075497999999996,
+        "max": 2.084067999999995
+      },
+      "peer_cpu_seconds": {
+        "median": 1.297142000000001,
+        "min": 1.244759000000002,
+        "max": 1.3135230000000035
+      },
+      "max_rss_kib": {
+        "median": 62208,
+        "min": 62208,
+        "max": 62208
+      }
+    },
+    {
+      "direction": "download",
+      "connections": 8,
+      "backend": "direct",
+      "repeats": 3,
+      "gbit_per_second": {
+        "median": 6.5210371303283425,
+        "min": 6.345474559081977,
+        "max": 7.265541578045508
+      },
+      "mib_per_second": {
+        "median": 777.368203440707,
+        "min": 756.4395140507195,
+        "max": 866.1200497204671
+      },
+      "relay_cpu_percent": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "relay_cpu_seconds_per_gib": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "driver_cpu_seconds": {
+        "median": 2.0452260000000013,
+        "min": 2.038713999999999,
+        "max": 2.0603809999999996
+      },
+      "peer_cpu_seconds": {
+        "median": 1.4798660000000012,
+        "min": 1.4764660000000003,
+        "max": 1.5258839999999978
+      }
+    },
+    {
+      "direction": "download",
+      "connections": 8,
+      "backend": "splice",
+      "repeats": 3,
+      "gbit_per_second": {
+        "median": 5.24790370213202,
+        "min": 4.715046368078694,
+        "max": 5.342988152958594
+      },
+      "mib_per_second": {
+        "median": 625.5988719620728,
+        "min": 562.0773277376525,
+        "max": 636.933821792435
+      },
+      "relay_cpu_percent": {
+        "median": 36.198070728025414,
+        "min": 33.93544465021891,
+        "max": 46.96114542763026
+      },
+      "relay_cpu_seconds_per_gib": {
+        "median": 0.6182404734539222,
+        "min": 0.5819572325612412,
+        "max": 0.7686748661658193
+      },
+      "lag_p99_ms": {
+        "median": 1.7408149706170661,
+        "min": 1.3843390019019353,
+        "max": 5.682511967279424
+      },
+      "lag_max_ms": {
+        "median": 5.522572998415853,
+        "min": 2.1141920007039516,
+        "max": 7.409702962149822
+      },
+      "driver_cpu_seconds": {
+        "median": 1.750472000000002,
+        "min": 1.746633999999986,
+        "max": 2.091692000000009
+      },
+      "peer_cpu_seconds": {
+        "median": 1.1721620000000073,
+        "min": 1.1516039999999919,
+        "max": 1.4162299999999988
+      },
+      "max_rss_kib": {
+        "median": 62208,
+        "min": 62208,
+        "max": 62208
+      }
+    },
+    {
+      "direction": "download",
+      "connections": 32,
+      "backend": "copy",
+      "repeats": 3,
+      "gbit_per_second": {
+        "median": 3.839868564606678,
+        "min": 3.01358158657822,
+        "max": 3.997515537507498
+      },
+      "mib_per_second": {
+        "median": 457.74800355514026,
+        "min": 359.24691993930577,
+        "max": 476.54098719447825
+      },
+      "relay_cpu_percent": {
+        "median": 98.96274200105346,
+        "min": 82.70752231212283,
+        "max": 99.3695607325157
+      },
+      "relay_cpu_seconds_per_gib": {
+        "median": 2.222935532210109,
+        "min": 2.126529522794696,
+        "max": 2.3575011544127493
+      },
+      "lag_p99_ms": {
+        "median": 19.262185989191494,
+        "min": 18.70899200059739,
+        "max": 22.48148899957414
+      },
+      "lag_max_ms": {
+        "median": 25.350209988573624,
+        "min": 21.59842300136461,
+        "max": 26.107736999392728
+      },
+      "driver_cpu_seconds": {
+        "median": 2.155230000000003,
+        "min": 2.152228000000001,
+        "max": 2.202649000000008
+      },
+      "peer_cpu_seconds": {
+        "median": 1.1565080000000165,
+        "min": 1.1557820000000056,
+        "max": 1.2101770000000016
+      },
+      "max_rss_kib": {
+        "median": 62208,
+        "min": 57812,
+        "max": 62208
+      }
+    },
+    {
+      "direction": "download",
+      "connections": 32,
+      "backend": "direct",
+      "repeats": 3,
+      "gbit_per_second": {
+        "median": 5.633703181743094,
+        "min": 5.227217357034135,
+        "max": 5.825350312022651
+      },
+      "mib_per_second": {
+        "median": 671.5897538355701,
+        "min": 623.1328674595517,
+        "max": 694.4358720806421
+      },
+      "relay_cpu_percent": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "relay_cpu_seconds_per_gib": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "driver_cpu_seconds": {
+        "median": 2.0139700000000005,
+        "min": 1.7148919999999919,
+        "max": 2.1371289999999945
+      },
+      "peer_cpu_seconds": {
+        "median": 1.4122699999999995,
+        "min": 1.1452269999999913,
+        "max": 1.427501999999997
+      }
+    },
+    {
+      "direction": "download",
+      "connections": 32,
+      "backend": "splice",
+      "repeats": 3,
+      "gbit_per_second": {
+        "median": 3.7577622731475917,
+        "min": 2.9808309407459235,
+        "max": 3.76294706057533
+      },
+      "mib_per_second": {
+        "median": 447.9601708826532,
+        "min": 355.34273871730846,
+        "max": 448.57824570838574
+      },
+      "relay_cpu_percent": {
+        "median": 38.67519082871855,
+        "min": 34.36067365357332,
+        "max": 42.87510994983712
+      },
+      "relay_cpu_seconds_per_gib": {
+        "median": 0.8828648243087871,
+        "min": 0.7854566568257731,
+        "max": 1.2355426973719859
+      },
+      "lag_p99_ms": {
+        "median": 3.057620999243227,
+        "min": 1.7517520002456877,
+        "max": 10.413544991479284
+      },
+      "lag_max_ms": {
+        "median": 6.963736998386594,
+        "min": 3.7801510017061446,
+        "max": 18.44402499136777
+      },
+      "driver_cpu_seconds": {
+        "median": 1.8022959999999983,
+        "min": 1.6827849999999955,
+        "max": 1.8295229999999947
+      },
+      "peer_cpu_seconds": {
+        "median": 1.236495000000005,
+        "min": 1.1605950000000007,
+        "max": 1.3701619999999934
+      },
+      "max_rss_kib": {
+        "median": 62208,
+        "min": 62208,
+        "max": 63428
+      }
+    },
+    {
+      "direction": "duplex",
+      "connections": 1,
+      "backend": "copy",
+      "repeats": 3,
+      "gbit_per_second": {
+        "median": 4.307771706817632,
+        "min": 4.270024060262628,
+        "max": 5.244227116026531
+      },
+      "mib_per_second": {
+        "median": 513.5264047166862,
+        "min": 509.02653458865024,
+        "max": 625.1605887444653
+      },
+      "relay_cpu_percent": {
+        "median": 99.83537632368021,
+        "min": 99.74734602072758,
+        "max": 99.84932424310784
+      },
+      "relay_cpu_seconds_per_gib": {
+        "median": 1.9910506467793343,
+        "min": 1.635282632911392,
+        "max": 2.0066003515468305
+      },
+      "lag_p99_ms": {
+        "median": 2.3024200010013374,
+        "min": 1.1898959692189237,
+        "max": 2.8278789909563784
+      },
+      "lag_max_ms": {
+        "median": 3.358835001108673,
+        "min": 3.0685599735988944,
+        "max": 5.383776989447142
+      },
+      "driver_cpu_seconds": {
+        "median": 1.8760850000000033,
+        "min": 1.8626780000000025,
+        "max": 1.8859090000000123
+      },
+      "peer_cpu_seconds": {
+        "median": 1.6872299999999996,
+        "min": 1.5930630000000008,
+        "max": 1.7007499999999993
+      },
+      "max_rss_kib": {
+        "median": 62208,
+        "min": 62208,
+        "max": 62208
+      }
+    },
+    {
+      "direction": "duplex",
+      "connections": 1,
+      "backend": "direct",
+      "repeats": 3,
+      "gbit_per_second": {
+        "median": 8.623623365931103,
+        "min": 7.731947659252627,
+        "max": 9.084308573648867
+      },
+      "mib_per_second": {
+        "median": 1028.0160148061636,
+        "min": 921.7199873033317,
+        "max": 1082.9339711247524
+      },
+      "relay_cpu_percent": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "relay_cpu_seconds_per_gib": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "driver_cpu_seconds": {
+        "median": 2.0010049999999993,
+        "min": 1.9872480000000081,
+        "max": 2.003612000000004
+      },
+      "peer_cpu_seconds": {
+        "median": 1.777439000000001,
+        "min": 1.7613139999999987,
+        "max": 1.7884929999999883
+      }
+    },
+    {
+      "direction": "duplex",
+      "connections": 1,
+      "backend": "splice",
+      "repeats": 3,
+      "gbit_per_second": {
+        "median": 7.393573031464877,
+        "min": 6.505813313810435,
+        "max": 7.6262024407210545
+      },
+      "mib_per_second": {
+        "median": 881.382588322744,
+        "min": 775.5533830893559,
+        "max": 909.1141749287908
+      },
+      "relay_cpu_percent": {
+        "median": 59.333913045253915,
+        "min": 57.39093352271413,
+        "max": 60.37128987797388
+      },
+      "relay_cpu_seconds_per_gib": {
+        "median": 0.6893479376982169,
+        "min": 0.6464349313645064,
+        "max": 0.7971108396019025
+      },
+      "lag_p99_ms": {
+        "median": 2.187516965705072,
+        "min": 1.4128060007578824,
+        "max": 6.159225001397317
+      },
+      "lag_max_ms": {
+        "median": 5.03011698674527,
+        "min": 3.531506000513218,
+        "max": 17.23845800017898
+      },
+      "driver_cpu_seconds": {
+        "median": 2.01014099999999,
+        "min": 2.0088500000000007,
+        "max": 2.0127260000000007
+      },
+      "peer_cpu_seconds": {
+        "median": 1.7597069999999988,
+        "min": 1.7365199999999996,
+        "max": 1.80436499999999
+      },
+      "max_rss_kib": {
+        "median": 57812,
+        "min": 56936,
+        "max": 62208
+      }
+    },
+    {
+      "direction": "duplex",
+      "connections": 8,
+      "backend": "copy",
+      "repeats": 3,
+      "gbit_per_second": {
+        "median": 4.11389838556605,
+        "min": 3.6025355463938804,
+        "max": 4.1979531320735735
+      },
+      "mib_per_second": {
+        "median": 490.4149038274348,
+        "min": 429.45570306705,
+        "max": 500.4350104419676
+      },
+      "relay_cpu_percent": {
+        "median": 99.74196885908162,
+        "min": 99.73516779130937,
+        "max": 99.79764686568741
+      },
+      "relay_cpu_seconds_per_gib": {
+        "median": 2.083802706502229,
+        "min": 2.040800697139555,
+        "max": 2.3782610262775656
+      },
+      "lag_p99_ms": {
+        "median": 10.531346997822766,
+        "min": 9.414896999714983,
+        "max": 22.627215001762124
+      },
+      "lag_max_ms": {
+        "median": 11.32673399979467,
+        "min": 10.850831994503096,
+        "max": 24.11003800182243
+      },
+      "driver_cpu_seconds": {
+        "median": 2.1349950000000035,
+        "min": 2.086386999999995,
+        "max": 2.1521390000000054
+      },
+      "peer_cpu_seconds": {
+        "median": 1.8048919999999953,
+        "min": 1.7782979999999924,
+        "max": 1.8140649999999994
+      },
+      "max_rss_kib": {
+        "median": 62208,
+        "min": 62208,
+        "max": 62208
+      }
+    },
+    {
+      "direction": "duplex",
+      "connections": 8,
+      "backend": "direct",
+      "repeats": 3,
+      "gbit_per_second": {
+        "median": 8.6950590619045,
+        "min": 8.469346851871586,
+        "max": 9.250918040583848
+      },
+      "mib_per_second": {
+        "median": 1036.5318133717178,
+        "min": 1009.6248211707576,
+        "max": 1102.7953673105058
+      },
+      "relay_cpu_percent": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "relay_cpu_seconds_per_gib": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "driver_cpu_seconds": {
+        "median": 2.0567469999999872,
+        "min": 2.0524270000000087,
+        "max": 2.0691629999999996
+      },
+      "peer_cpu_seconds": {
+        "median": 1.7045269999999988,
+        "min": 1.6731920000000144,
+        "max": 1.717115999999999
+      }
+    },
+    {
+      "direction": "duplex",
+      "connections": 8,
+      "backend": "splice",
+      "repeats": 3,
+      "gbit_per_second": {
+        "median": 5.9229194797524665,
+        "min": 5.881891832184375,
+        "max": 6.319399131335022
+      },
+      "mib_per_second": {
+        "median": 706.0670232477744,
+        "min": 701.1761465292424,
+        "max": 753.3310808342721
+      },
+      "relay_cpu_percent": {
+        "median": 59.758788039452114,
+        "min": 57.36739042366048,
+        "max": 63.066970961391746
+      },
+      "relay_cpu_seconds_per_gib": {
+        "median": 0.8666740824535718,
+        "min": 0.7797927005583308,
+        "max": 0.9210321626617375
+      },
+      "lag_p99_ms": {
+        "median": 3.4627009922587604,
+        "min": 2.9522109584831924,
+        "max": 5.583361997423708
+      },
+      "lag_max_ms": {
+        "median": 13.966847994879572,
+        "min": 5.10305499756214,
+        "max": 32.84135597050408
+      },
+      "driver_cpu_seconds": {
+        "median": 1.984423000000021,
+        "min": 1.8335579999999965,
+        "max": 2.0947380000000067
+      },
+      "peer_cpu_seconds": {
+        "median": 1.665042999999983,
+        "min": 1.6526789999999991,
+        "max": 1.7850410000000068
+      },
+      "max_rss_kib": {
+        "median": 62208,
+        "min": 62208,
+        "max": 62208
+      }
+    },
+    {
+      "direction": "duplex",
+      "connections": 32,
+      "backend": "copy",
+      "repeats": 3,
+      "gbit_per_second": {
+        "median": 2.499987909825304,
+        "min": 2.4623461756416227,
+        "max": 2.8534560831276776
+      },
+      "mib_per_second": {
+        "median": 298.0217826158171,
+        "min": 293.53453822632105,
+        "max": 340.15847243400543
+      },
+      "relay_cpu_percent": {
+        "median": 90.64191266280332,
+        "min": 89.35828944315573,
+        "max": 99.41530518100524
+      },
+      "relay_cpu_seconds_per_gib": {
+        "median": 3.1144474659546058,
+        "min": 2.9927601619595103,
+        "max": 3.1172784280410943
+      },
+      "lag_p99_ms": {
+        "median": 26.54883800028074,
+        "min": 19.583755000212477,
+        "max": 29.69641700201464
+      },
+      "lag_max_ms": {
+        "median": 37.23053800001708,
+        "min": 36.1687700000175,
+        "max": 40.17717200008519
+      },
+      "driver_cpu_seconds": {
+        "median": 2.0880810000000025,
+        "min": 1.8692470000000014,
+        "max": 2.1374840000000077
+      },
+      "peer_cpu_seconds": {
+        "median": 1.881649000000003,
+        "min": 1.5927190000000024,
+        "max": 1.8859259999999978
+      },
+      "max_rss_kib": {
+        "median": 62208,
+        "min": 62208,
+        "max": 62208
+      }
+    },
+    {
+      "direction": "duplex",
+      "connections": 32,
+      "backend": "direct",
+      "repeats": 3,
+      "gbit_per_second": {
+        "median": 7.834659972821596,
+        "min": 3.885586242304066,
+        "max": 19.412607794959285
+      },
+      "mib_per_second": {
+        "median": 933.9642492320056,
+        "min": 463.1979754333575,
+        "max": 2314.1631835650546
+      },
+      "relay_cpu_percent": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "relay_cpu_seconds_per_gib": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "driver_cpu_seconds": {
+        "median": 2.0637380000000007,
+        "min": 1.906508,
+        "max": 2.2001479999999987
+      },
+      "peer_cpu_seconds": {
+        "median": 1.769009000000004,
+        "min": 1.681055,
+        "max": 1.770021999999983
+      }
+    },
+    {
+      "direction": "duplex",
+      "connections": 32,
+      "backend": "splice",
+      "repeats": 3,
+      "gbit_per_second": {
+        "median": 4.507565010810711,
+        "min": 4.286423431495591,
+        "max": 4.790045751773412
+      },
+      "mib_per_second": {
+        "median": 537.3436225427045,
+        "min": 510.98149198241134,
+        "max": 571.0179509846463
+      },
+      "relay_cpu_percent": {
+        "median": 65.66570994937169,
+        "min": 57.17715862508239,
+        "max": 68.04946338703004
+      },
+      "relay_cpu_seconds_per_gib": {
+        "median": 1.2203232908555692,
+        "min": 1.0896083618714814,
+        "max": 1.315931947501362
+      },
+      "lag_p99_ms": {
+        "median": 7.852746001162814,
+        "min": 2.2516900011169128,
+        "max": 8.92723500169268
+      },
+      "lag_max_ms": {
+        "median": 16.272320001803564,
+        "min": 2.589035001847151,
+        "max": 35.745026001677616
+      },
+      "driver_cpu_seconds": {
+        "median": 2.0426960000000003,
+        "min": 1.9928540000000012,
+        "max": 2.169083999999998
+      },
+      "peer_cpu_seconds": {
+        "median": 1.8214029999999992,
+        "min": 1.7116289999999985,
+        "max": 1.983221000000004
+      },
+      "max_rss_kib": {
+        "median": 56936,
+        "min": 52164,
+        "max": 62208
+      }
+    },
+    {
+      "direction": "upload",
+      "connections": 1,
+      "backend": "copy",
+      "repeats": 3,
+      "gbit_per_second": {
+        "median": 6.341788719194943,
+        "min": 4.950244477174725,
+        "max": 16.317108362656242
+      },
+      "mib_per_second": {
+        "median": 756.0001276963881,
+        "min": 590.1151272266776,
+        "max": 1945.150895435362
+      },
+      "relay_cpu_percent": {
+        "median": 99.59496618847689,
+        "min": 98.52406726506963,
+        "max": 99.89904733602059
+      },
+      "relay_cpu_seconds_per_gib": {
+        "median": 1.3490109543732498,
+        "min": 0.5259058549757866,
+        "max": 1.709643427606585
+      },
+      "lag_p99_ms": {
+        "median": 1.208737001661575,
+        "min": 0.1894190002076357,
+        "max": 8.382903989968327
+      },
+      "lag_max_ms": {
+        "median": 6.022155001573992,
+        "min": 0.264368000102877,
+        "max": 22.33940299038295
+      },
+      "driver_cpu_seconds": {
+        "median": 1.3661740000000009,
+        "min": 1.2127690000000002,
+        "max": 1.4214580000000012
+      },
+      "peer_cpu_seconds": {
+        "median": 1.774840999999995,
+        "min": 1.630344000000008,
+        "max": 1.88585
+      },
+      "max_rss_kib": {
+        "median": 62208,
+        "min": 52164,
+        "max": 63428
+      }
+    },
+    {
+      "direction": "upload",
+      "connections": 1,
+      "backend": "direct",
+      "repeats": 3,
+      "gbit_per_second": {
+        "median": 20.089674866690284,
+        "min": 17.107745809258756,
+        "max": 22.269034213197987
+      },
+      "mib_per_second": {
+        "median": 2394.875868164335,
+        "min": 2039.4022237370914,
+        "max": 2654.675747537373
+      },
+      "relay_cpu_percent": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "relay_cpu_seconds_per_gib": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "driver_cpu_seconds": {
+        "median": 1.9972399999999997,
+        "min": 1.9157319999999984,
+        "max": 1.9975179999999995
+      },
+      "peer_cpu_seconds": {
+        "median": 1.9805960000000002,
+        "min": 1.879679000000003,
+        "max": 1.9910370000000057
+      }
+    },
+    {
+      "direction": "upload",
+      "connections": 1,
+      "backend": "splice",
+      "repeats": 3,
+      "gbit_per_second": {
+        "median": 10.24930060656681,
+        "min": 9.093313934004872,
+        "max": 29.341569471073033
+      },
+      "mib_per_second": {
+        "median": 1221.8118437012208,
+        "min": 1084.0074937349405,
+        "max": 3497.7876509515086
+      },
+      "relay_cpu_percent": {
+        "median": 85.72519108523568,
+        "min": 83.36018875822144,
+        "max": 98.28392985959465
+      },
+      "relay_cpu_seconds_per_gib": {
+        "median": 0.718462471319336,
+        "min": 0.28773257332773455,
+        "max": 0.7874561179859431
+      },
+      "lag_p99_ms": {
+        "median": 4.429131001302267,
+        "min": 0.41918200054169574,
+        "max": 11.82272300150089
+      },
+      "lag_max_ms": {
+        "median": 6.622020000804696,
+        "min": 1.3314640010548828,
+        "max": 29.133529001455827
+      },
+      "driver_cpu_seconds": {
+        "median": 1.9285139999999998,
+        "min": 1.9096040000000016,
+        "max": 1.9925410000000001
+      },
+      "peer_cpu_seconds": {
+        "median": 1.8719370000000002,
+        "min": 1.8685350000000014,
+        "max": 1.8724120000000006
+      },
+      "max_rss_kib": {
+        "median": 56936,
+        "min": 52164,
+        "max": 62208
+      }
+    },
+    {
+      "direction": "upload",
+      "connections": 8,
+      "backend": "copy",
+      "repeats": 3,
+      "gbit_per_second": {
+        "median": 5.200416892734231,
+        "min": 4.425022487834835,
+        "max": 6.045584326040049
+      },
+      "mib_per_second": {
+        "median": 619.9380031507291,
+        "min": 527.5037870210213,
+        "max": 720.6898124265729
+      },
+      "relay_cpu_percent": {
+        "median": 99.80849522931081,
+        "min": 99.64247949777833,
+        "max": 99.85376585710954
+      },
+      "relay_cpu_seconds_per_gib": {
+        "median": 1.6486148388287283,
+        "min": 1.4187831501794386,
+        "max": 1.9342780377358488
+      },
+      "lag_p99_ms": {
+        "median": 5.19538500032013,
+        "min": 4.5815750012252465,
+        "max": 14.078613001743179
+      },
+      "lag_max_ms": {
+        "median": 12.243920001196784,
+        "min": 6.172548001131872,
+        "max": 22.641258001385722
+      },
+      "driver_cpu_seconds": {
+        "median": 1.3425969999999978,
+        "min": 1.2470149999999975,
+        "max": 1.3580070000000006
+      },
+      "peer_cpu_seconds": {
+        "median": 1.8803699999999992,
+        "min": 1.8524240000000063,
+        "max": 1.8812280000000001
+      },
+      "max_rss_kib": {
+        "median": 62208,
+        "min": 62208,
+        "max": 62208
+      }
+    },
+    {
+      "direction": "upload",
+      "connections": 8,
+      "backend": "direct",
+      "repeats": 3,
+      "gbit_per_second": {
+        "median": 14.908398872500381,
+        "min": 14.13731292839354,
+        "max": 17.704601229516236
+      },
+      "mib_per_second": {
+        "median": 1777.2196379304387,
+        "min": 1685.2990303508686,
+        "max": 2110.5529343505186
+      },
+      "relay_cpu_percent": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "relay_cpu_seconds_per_gib": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "driver_cpu_seconds": {
+        "median": 1.996894999999995,
+        "min": 1.982063999999994,
+        "max": 1.9984459999999995
+      },
+      "peer_cpu_seconds": {
+        "median": 2.0089380000000006,
+        "min": 1.9989579999999947,
+        "max": 2.010138999999999
+      }
+    },
+    {
+      "direction": "upload",
+      "connections": 8,
+      "backend": "splice",
+      "repeats": 3,
+      "gbit_per_second": {
+        "median": 9.294444307245259,
+        "min": 9.07023248231999,
+        "max": 9.873968655020759
+      },
+      "mib_per_second": {
+        "median": 1107.9841026360104,
+        "min": 1081.2559702777849,
+        "max": 1177.0687884117078
+      },
+      "relay_cpu_percent": {
+        "median": 91.93009915787157,
+        "min": 88.0121622810517,
+        "max": 92.74102078578495
+      },
+      "relay_cpu_seconds_per_gib": {
+        "median": 0.8335163610948028,
+        "min": 0.8068076073343888,
+        "max": 0.849618882741188
+      },
+      "lag_p99_ms": {
+        "median": 7.361450001326375,
+        "min": 6.996125001819564,
+        "max": 8.172467001031691
+      },
+      "lag_max_ms": {
+        "median": 12.327972001571652,
+        "min": 11.434511000629755,
+        "max": 17.240363001064907
+      },
+      "driver_cpu_seconds": {
+        "median": 1.9969970000000004,
+        "min": 1.9925829999999962,
+        "max": 1.9972680000000018
+      },
+      "peer_cpu_seconds": {
+        "median": 2.0319860000000034,
+        "min": 1.9878690000000008,
+        "max": 2.0526850000000003
+      },
+      "max_rss_kib": {
+        "median": 62208,
+        "min": 56936,
+        "max": 62208
+      }
+    },
+    {
+      "direction": "upload",
+      "connections": 32,
+      "backend": "copy",
+      "repeats": 3,
+      "gbit_per_second": {
+        "median": 5.256735890738269,
+        "min": 4.881999252609302,
+        "max": 5.268505358525105
+      },
+      "mib_per_second": {
+        "median": 626.6517508910023,
+        "min": 581.9796624909999,
+        "max": 628.0547807842618
+      },
+      "relay_cpu_percent": {
+        "median": 99.58460806690935,
+        "min": 96.32165970447501,
+        "max": 99.58600441926791
+      },
+      "relay_cpu_seconds_per_gib": {
+        "median": 1.62729360470984,
+        "min": 1.6236811126250996,
+        "max": 1.6947908302364043
+      },
+      "lag_p99_ms": {
+        "median": 15.62081198744636,
+        "min": 15.42895800162114,
+        "max": 25.317114001040864
+      },
+      "lag_max_ms": {
+        "median": 16.694100985660043,
+        "min": 16.557931001557336,
+        "max": 44.45825200127729
+      },
+      "driver_cpu_seconds": {
+        "median": 1.2498629999999906,
+        "min": 1.248774000000001,
+        "max": 1.317342999999994
+      },
+      "peer_cpu_seconds": {
+        "median": 1.999132000000003,
+        "min": 1.9896559999999965,
+        "max": 2.014713999999998
+      },
+      "max_rss_kib": {
+        "median": 62208,
+        "min": 56936,
+        "max": 63428
+      }
+    },
+    {
+      "direction": "upload",
+      "connections": 32,
+      "backend": "direct",
+      "repeats": 3,
+      "gbit_per_second": {
+        "median": 11.708979622372546,
+        "min": 11.166300556851033,
+        "max": 11.73078841744638
+      },
+      "mib_per_second": {
+        "median": 1395.819142147606,
+        "min": 1331.1267562927046,
+        "max": 1398.4189531143165
+      },
+      "relay_cpu_percent": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "relay_cpu_seconds_per_gib": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "driver_cpu_seconds": {
+        "median": 1.9937380000000005,
+        "min": 1.980033000000006,
+        "max": 1.997105999999988
+      },
+      "peer_cpu_seconds": {
+        "median": 2.0386859999999984,
+        "min": 2.0249489999999994,
+        "max": 2.0689720000000023
+      }
+    },
+    {
+      "direction": "upload",
+      "connections": 32,
+      "backend": "splice",
+      "repeats": 3,
+      "gbit_per_second": {
+        "median": 10.458327327262419,
+        "min": 9.672078699873,
+        "max": 10.67504448606172
+      },
+      "mib_per_second": {
+        "median": 1246.7297705724739,
+        "min": 1153.0016302911042,
+        "max": 1272.5644691064024
+      },
+      "relay_cpu_percent": {
+        "median": 96.15415241800463,
+        "min": 95.01185031590225,
+        "max": 96.25213538782872
+      },
+      "relay_cpu_seconds_per_gib": {
+        "median": 0.789760976276559,
+        "min": 0.7745162546173177,
+        "max": 0.8438161071716791
+      },
+      "lag_p99_ms": {
+        "median": 4.730920979682196,
+        "min": 4.676762001849966,
+        "max": 10.543596991738013
+      },
+      "lag_max_ms": {
+        "median": 9.44126100171161,
+        "min": 6.453234976561362,
+        "max": 20.077249995893
+      },
+      "driver_cpu_seconds": {
+        "median": 2.000017999999983,
+        "min": 1.9959080000000142,
+        "max": 2.0009529999999955
+      },
+      "peer_cpu_seconds": {
+        "median": 2.023690000000002,
+        "min": 2.018136999999996,
+        "max": 2.033377999999999
+      },
+      "max_rss_kib": {
+        "median": 62208,
+        "min": 62208,
+        "max": 62208
+      }
+    }
+  ]
+}

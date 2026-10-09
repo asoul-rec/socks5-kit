@@ -1,0 +1,249 @@
+[
+  {
+    "proxy": "xray",
+    "path": "direct",
+    "original_type": "DOMAIN",
+    "half_close": true,
+    "payload_bytes": 1048576,
+    "status": "FAIL",
+    "error": "AssertionError((0, 1048576))"
+  },
+  {
+    "proxy": "xray",
+    "path": "relay",
+    "original_type": "IPV4",
+    "half_close": false,
+    "payload_bytes": 1048576,
+    "bound": {
+      "type": "IPV4",
+      "host": "127.0.0.1",
+      "port": 51813
+    },
+    "status": "PASS"
+  },
+  {
+    "proxy": "xray",
+    "path": "relay",
+    "original_type": "IPV6",
+    "half_close": false,
+    "payload_bytes": 1048576,
+    "bound": {
+      "type": "IPV4",
+      "host": "127.0.0.1",
+      "port": 51813
+    },
+    "status": "PASS"
+  },
+  {
+    "proxy": "xray",
+    "path": "relay",
+    "original_type": "DOMAIN",
+    "half_close": false,
+    "payload_bytes": 1048576,
+    "bound": {
+      "type": "IPV4",
+      "host": "127.0.0.1",
+      "port": 51813
+    },
+    "status": "PASS"
+  },
+  {
+    "proxy": "xray",
+    "path": "relay",
+    "original_type": "IPV4",
+    "half_close": true,
+    "payload_bytes": 1048576,
+    "status": "FAIL",
+    "error": "AssertionError((0, 1048576))",
+    "direct_baseline": "FAIL"
+  },
+  {
+    "proxy": "xray",
+    "path": "relay",
+    "original_type": "IPV6",
+    "half_close": true,
+    "payload_bytes": 1048576,
+    "status": "FAIL",
+    "error": "AssertionError((0, 1048576))",
+    "direct_baseline": "FAIL"
+  },
+  {
+    "proxy": "xray",
+    "path": "relay",
+    "original_type": "DOMAIN",
+    "half_close": true,
+    "payload_bytes": 1048576,
+    "status": "FAIL",
+    "error": "AssertionError((0, 1048576))",
+    "direct_baseline": "FAIL"
+  },
+  {
+    "proxy": "v2ray",
+    "path": "direct",
+    "original_type": "DOMAIN",
+    "half_close": true,
+    "payload_bytes": 1048576,
+    "status": "FAIL",
+    "error": "AssertionError((0, 1048576))"
+  },
+  {
+    "proxy": "v2ray",
+    "path": "relay",
+    "original_type": "IPV4",
+    "half_close": false,
+    "payload_bytes": 1048576,
+    "bound": {
+      "type": "IPV4",
+      "host": "127.0.0.1",
+      "port": 53985
+    },
+    "status": "PASS"
+  },
+  {
+    "proxy": "v2ray",
+    "path": "relay",
+    "original_type": "IPV6",
+    "half_close": false,
+    "payload_bytes": 1048576,
+    "bound": {
+      "type": "IPV4",
+      "host": "127.0.0.1",
+      "port": 53985
+    },
+    "status": "PASS"
+  },
+  {
+    "proxy": "v2ray",
+    "path": "relay",
+    "original_type": "DOMAIN",
+    "half_close": false,
+    "payload_bytes": 1048576,
+    "bound": {
+      "type": "IPV4",
+      "host": "127.0.0.1",
+      "port": 53985
+    },
+    "status": "PASS"
+  },
+  {
+    "proxy": "v2ray",
+    "path": "relay",
+    "original_type": "IPV4",
+    "half_close": true,
+    "payload_bytes": 1048576,
+    "status": "FAIL",
+    "error": "AssertionError((0, 1048576))",
+    "direct_baseline": "FAIL"
+  },
+  {
+    "proxy": "v2ray",
+    "path": "relay",
+    "original_type": "IPV6",
+    "half_close": true,
+    "payload_bytes": 1048576,
+    "status": "FAIL",
+    "error": "AssertionError((0, 1048576))",
+    "direct_baseline": "FAIL"
+  },
+  {
+    "proxy": "v2ray",
+    "path": "relay",
+    "original_type": "DOMAIN",
+    "half_close": true,
+    "payload_bytes": 1048576,
+    "status": "FAIL",
+    "error": "AssertionError((0, 1048576))",
+    "direct_baseline": "FAIL"
+  },
+  {
+    "proxy": "shadowsocks-rust",
+    "path": "direct",
+    "original_type": "DOMAIN",
+    "half_close": true,
+    "payload_bytes": 1048576,
+    "bound": {
+      "type": "IPV4",
+      "host": "127.0.0.1",
+      "port": 50748
+    },
+    "status": "PASS"
+  },
+  {
+    "proxy": "shadowsocks-rust",
+    "path": "relay",
+    "original_type": "IPV4",
+    "half_close": false,
+    "payload_bytes": 1048576,
+    "bound": {
+      "type": "IPV4",
+      "host": "127.0.0.1",
+      "port": 50754
+    },
+    "status": "PASS"
+  },
+  {
+    "proxy": "shadowsocks-rust",
+    "path": "relay",
+    "original_type": "IPV6",
+    "half_close": false,
+    "payload_bytes": 1048576,
+    "bound": {
+      "type": "IPV4",
+      "host": "127.0.0.1",
+      "port": 50762
+    },
+    "status": "PASS"
+  },
+  {
+    "proxy": "shadowsocks-rust",
+    "path": "relay",
+    "original_type": "DOMAIN",
+    "half_close": false,
+    "payload_bytes": 1048576,
+    "bound": {
+      "type": "IPV4",
+      "host": "127.0.0.1",
+      "port": 50770
+    },
+    "status": "PASS"
+  },
+  {
+    "proxy": "shadowsocks-rust",
+    "path": "relay",
+    "original_type": "IPV4",
+    "half_close": true,
+    "payload_bytes": 1048576,
+    "bound": {
+      "type": "IPV4",
+      "host": "127.0.0.1",
+      "port": 50772
+    },
+    "status": "PASS"
+  },
+  {
+    "proxy": "shadowsocks-rust",
+    "path": "relay",
+    "original_type": "IPV6",
+    "half_close": true,
+    "payload_bytes": 1048576,
+    "bound": {
+      "type": "IPV4",
+      "host": "127.0.0.1",
+      "port": 50778
+    },
+    "status": "PASS"
+  },
+  {
+    "proxy": "shadowsocks-rust",
+    "path": "relay",
+    "original_type": "DOMAIN",
+    "half_close": true,
+    "payload_bytes": 1048576,
+    "bound": {
+      "type": "IPV4",
+      "host": "127.0.0.1",
+      "port": 50786
+    },
+    "status": "PASS"
+  }
+]

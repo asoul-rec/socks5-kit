@@ -1,0 +1,23 @@
+[
+  {
+    "repository": "XTLS/Xray-core",
+    "tag": "v26.9.9",
+    "asset": "Xray-linux-64.zip",
+    "url": "https://github.com/XTLS/Xray-core/releases/download/v26.9.9/Xray-linux-64.zip",
+    "digest": "sha256:1eb9175d0f0a8f8149c9230a7fc5ae66ce332ed20a53155ce61fe62e3f58b7df"
+  },
+  {
+    "repository": "v2fly/v2ray-core",
+    "tag": "v5.53.0",
+    "asset": "v2ray-linux-64.zip",
+    "url": "https://github.com/v2fly/v2ray-core/releases/download/v5.53.0/v2ray-linux-64.zip",
+    "digest": "sha256:6bbb8aee65a57d0b12599b4b7c842b3ad0daca4436e661d94015c447cb31b4fa"
+  },
+  {
+    "repository": "shadowsocks/shadowsocks-rust",
+    "tag": "v1.25.0",
+    "asset": "shadowsocks-v1.25.0.x86_64-unknown-linux-gnu.tar.xz",
+    "url": "https://github.com/shadowsocks/shadowsocks-rust/releases/download/v1.25.0/shadowsocks-v1.25.0.x86_64-unknown-linux-gnu.tar.xz",
+    "digest": "sha256:874f817fcf3e6d7681ec715a1c13c686c6eaae936524d102639b38364f3966ae"
+  }
+]
