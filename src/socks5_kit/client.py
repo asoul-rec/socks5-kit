@@ -97,9 +97,17 @@ class Socks5Client:
             sock.close()
             raise
 
-    async def connect(self, target: Target) -> TcpTunnel:
+    async def connect(self, target: Target, *, initial_data: bytes = b"") -> TcpTunnel:
+        """Open a tunnel, optionally pipelining payload with the CONNECT frame.
+
+        ``initial_data`` is sent before the SOCKS reply and may reach the target
+        before the proxy reports success. It is not replayed or acknowledged by
+        this client. The returned socket retains all bytes after the reply.
+        """
         if not isinstance(target, Target):
             raise TypeError("target must be a Target")
+        if not isinstance(initial_data, bytes):
+            raise TypeError("initial_data must be bytes")
         loop = asyncio.get_running_loop()
         sock = await self._open_socket()
         try:
@@ -108,7 +116,7 @@ class Socks5Client:
                 version, method = await read_exact(sock, 2)
                 if version != VERSION or method != NO_AUTH:
                     raise ProtocolError("upstream does not accept SOCKS5 no-auth")
-                await loop.sock_sendall(sock, encode_connect(target))
+                await loop.sock_sendall(sock, encode_connect(target) + initial_data)
                 bound = await read_reply(sock)
             return TcpTunnel(sock, bound, loop)
         except ProtocolError as exc:

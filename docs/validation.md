@@ -120,3 +120,139 @@ Ruff、格式及锁文件检查通过，发行包重新构建并验证上游配�
 不转发凭据给上游、半关闭，以及错误版本/EOF/超时/关闭时的回收。
 全量 **458 passed，无跳过**，使用 asyncio debug、Python dev 模式和 `-W error`；
 所有网络测试仅本机回环。Ruff、格式和 uv 锁文件检查通过，发行包已重新构建并验证。
+
+## 独立 reverse addon 首版（2026-10-11）
+
+以下保留没有注册 HELLO/ACK 的首版验证。当前协议增加注册协商；VMess/SS 的旧失败
+已在后文的「注册 HELLO/ACK」中复测通过，不能用本节旧表判断当前版本的兼容性。
+
+实现独立子包 `socks5_kit.reverse`，按原始 SOCKS username 分组，等概率随机选择空闲资源。
+Agent 预建连接，收到反向 CONNECT 后异步补池，每条资源只使用一次。
+没有独立控制连接、额外注册 ACK、mux 或自动重发已提交的目标请求。
+
+Python 3.14.8/Linux 全量 **660 passed，无跳过**，其中新增 reverse 检查 201 项和
+1 项子包导入检查。使用 `PYTHONASYNCIODEBUG=1 python -X dev -m pytest -q -W error`。
+
+模块检查包括 DOMAIN/IPv4/IPv6、完整成功/失败 REP 与 BND、分片/拼包、2 MiB payload、
+目标先发 banner、双向半关闭、不同 username 隔离（含 `None`、空及非 UTF-8 bytes）、
+password 不参与分组、随机选取和单次使用、空闲 EOF/超时、注册和已领取资源的额度、
+补池时机、注册失败退避与无业务时重试，以及取消、关闭和 FD/pipe 回收。
+额外验证已建立 relay 在 Server 宽限关闭期间继续传输、关闭调用方被取消时的完整回收、
+非末尾资源移除后的索引更新，以及领取前就绪 EOF/异常字节与残留空闲回调的交接。
+握手沿用现有精确读取，转发运行真实 Linux splice；目标连接仅经本机 SOCKS 代理。
+
+测试辅助服务器的关闭顺序调整为先关闭连接并取消持有连接的测试任务，再等待监听器
+完全关闭，适配 Python 3.14 的 `Server.wait_closed()` 对活动连接的等待。
+没有为通过测试改变已有 SOCKS/DNS 行为。
+
+Ruff、格式、uv 锁文件离线检查通过；重新构建 wheel/源码包，核对其中 reverse 模块，
+并在隔离 Python 导入路径下验证 wheel 中的公开导出。
+完整接口和代理路由要求见 [reverse 文档](reverse.md)。
+
+### 真实双侧代理链路（无注册协商的首版）
+
+使用前文同一组官方固定版本二进制：Xray 26.9.9 与 V2Fly 5.53.0。
+每个品牌启动独立内网/公网代理进程；内网 SOCKS 入站按注册域名分流到载体，
+普通业务目标走 Freedom；公网的载体入站和业务 SOCKS 入站均通过带
+`user=reverse-test` 的 SOCKS5 出站交给 ReverseServer。所有监听及目标都在本机回环，
+没有修改代理代码、启用 mux 或发送公网业务数据。
+
+验证 Agent 不发送任何注册后的业务 payload 时，两条连接能到达指定 user 池并保持 2 秒；
+默认无认证池始终为零。随后依次请求 IPv4、IPv6、DOMAIN，双向各传 1 MiB，
+核对全部字节、目标主动发出的 38 字节 banner、Agent 收到的目标类型和补池。
+代理策略显式设置 `handshake=10`、`connIdle=300`、`uplinkOnly=10`、`downlinkOnly=10`。
+
+| 载体 | Xray | V2Fly |
+| --- | --- | --- |
+| VLESS/TLS，测试证书显式加入信任 | 预建 + 3/3 双向传输通过 | 预建 + 3/3 双向传输通过 |
+| VLESS 裸 TCP，无 TLS | 预建 + 3/3 双向传输通过 | 预建 + 3/3 双向传输通过 |
+| VMess AES-128-GCM / TCP | 短时入池，3/3 业务失败 | 预建 + 3/3 双向传输通过 |
+| 代理内置 Shadowsocks chacha20-ietf-poly1305 / TCP | 短时入池，3/3 业务失败 | 预建 + 3/3 双向传输通过 |
+
+默认工具使用通过的 VLESS/TLS 配置：自带公开的测试证书/私钥，仅生成本机测试配置，
+双方显式信任该证书，设置 `serverName=localhost`，不依赖 `allowInsecure` 或运行时 openssl。
+VLESS 裸 TCP 仅用于对照，不提供载体加密。表中的 Shadowsocks 是 Xray/V2Fly 自身的实现，
+不是此前验证的 Shadowsocks Rust。
+
+最终默认 VLESS/TLS 拓扑的 **8 项必要检查全部通过**。另做 4 项 EOF 触发响应探针：
+两个品牌的直接内网代理及 reverse 链路都未通过，与此前记录的半关闭限制一致。
+模块自己的真实半关闭测试通过；这里保留代理链路的实际限制，不用正常传输成功代替它。
+各载体、失败对照和最终默认配置结果保存在 [逐项记录](reverse-interop-results.json)。
+
+Xray 的 VMess 问题在不使用 ReverseAgent、ReverseServer 和 splice 的原始载体对照中仍复现：
+远端先发的请求能到达客户端，但客户端回写内容没有返回，之后载体关闭。
+默认策略约 1 秒关闭，延长单向超时只是延迟关闭，不能让回写通过。
+因此本次不为这些载体增加 addon 心跳或改动 CONNECT/REP 约定，也不将短暂入池称为可用链路。
+这些结论只适用于本次固定版本和配置；预建流需要代理实际支持无首包等待及服务端先发数据。
+
+复现通过的加密拓扑：
+
+```bash
+uv run python tools/check_reverse_interop.py \
+  --bin-dir /absolute/path/to/proxy-binaries \
+  --output-dir /absolute/path/to/reverse-test-output
+```
+
+输出目录保存双方配置、日志及 `results.json`。`--carrier vmess|vless|vless-tls|shadowsocks`
+可选择其他载体；必须检查失败项目和退出码。当前工具执行新版注册协商，
+历史失败保存在旧 JSON 中，不能用当前工具直接重现无 HELLO 的行为。
+`--probe-half-close` 额外记录直接连接内网代理与 reverse 链路的 EOF 触发响应对照；
+该探针单列为代理限制，不代替正常传输检查。
+
+## 注册 HELLO/ACK（2026-10-12）
+
+Agent 在本机 SOCKS CONNECT 后立即流水发送 6 字节 HELLO，先于本机 SOCKS REP。
+Server 预留资源额度、发送正常 REP，精确读取并校验 HELLO，再写出 6 字节 ACK，随后入池。
+Agent 只有收到版本、magic 和消息类型均匹配的完整 ACK，才计为待用资源。
+这样确认公网 addon 已接收注册、保留资源且回程可用，也给载体提供及时的客户端首包。
+HELLO/ACK 属于后台预建过程；命中热池时的业务 CONNECT/REP 没有增加一轮协商。
+帧格式和超时见 [reverse 文档](reverse.md)，两端 addon 必须同时更新。
+
+新增检查覆盖客户端 payload 先于 SOCKS REP、成功回复和后续数据合包、拒绝时 socket 回收、
+假 SOCKS 成功不计为就绪、错误/截断/分片 HELLO 和 ACK、ACK 与 CONNECT 合包、
+握手超时/取消、预留资源配额和退避重置。
+关闭时显式取消等待 HELLO 的注册任务，避免仅关闭 raw socket 无法唤醒 `sock_recv`，
+导致非业务握手占满宽限期。已领取的业务资源仍遵循既有宽限关闭。
+新增 timeout 参数置于选项字段末尾，保留原位置参数的含义；普通 SOCKS client 用法不变。
+
+全量 **710 passed，无跳过**，使用 asyncio debug、Python dev 模式和 `-W error`；
+reverse 检查共 245 项，另有 6 项客户端首包检查。有效 ACK 还会唤醒补池调度器，
+不会继续等待其他并行失败所遗留的退避期限。Ruff、格式和 uv 锁文件检查通过。
+
+### 带注册协商的真实代理复测
+
+保持二进制版本、username 分组、路由与载体配置，使用当前工具复测：
+
+| 载体 | 代理策略 | Xray 26.9.9 | V2Fly 5.53.0 |
+| --- | --- | --- | --- |
+| VMess AES-128-GCM / TCP | 显式超时 | 4/4 通过 | 4/4 通过 |
+| VMess AES-128-GCM / TCP | 代理内置默认 | 4/4 通过 | 4/4 通过 |
+| 内置 SS chacha20-ietf-poly1305 / TCP | 显式超时 | 4/4 通过 | 4/4 通过 |
+| 内置 SS chacha20-ietf-poly1305 / TCP | 代理内置默认 | 4/4 通过 | 4/4 通过 |
+| VLESS/TLS | 显式超时 | 4/4 通过 | 4/4 通过 |
+
+每组 4 项包含：注册并保持空闲、IPv4、IPv6、DOMAIN，合计 **40 项必要检查全部通过**。
+预建时检查 Agent 和 Server 各有 2 条确认资源，2 秒后仍为 2，注册尝试总数恰为 2，
+默认无认证池为零，证明没有靠断线补建掩盖失败。除了注册 HELLO，没有终端业务 payload。
+三类业务都先接收目标的 38 字节 greeting，再发送任何业务数据，之后双向各传 1 MiB，
+校验完整内容、原始目标和 ACK 确认的补池数量。
+
+此前 Xray VMess/SS 的「短时入池、3/3 业务失败」在这些版本和配置下已消失。
+这验证了及时发送首包的兼容性效果，不能推断注册 ACK 能维持任意长时间的空闲连接；
+以后仍可能遇到代理/NAT 超时，按原有 EOF 检测及补建处理。
+最终 VLESS/TLS 的 4 项额外半关闭探针仍为 TimeoutError：直接内网代理和 reverse 链路
+都未通过，注册协商不改变中间代理的半关闭行为。
+
+[新逐项记录](reverse-registration-interop-results.json) 保存五次复测、全部必要检查和可选探针，
+并记录 [旧结果](reverse-interop-results.json) 的 SHA-256，旧失败证据保留。
+复现默认策略下的 VMess：
+
+```bash
+uv run python tools/check_reverse_interop.py \
+  --bin-dir /absolute/path/to/proxy-binaries \
+  --output-dir /absolute/path/to/reverse-registration-test-output \
+  --carrier vmess --default-policy
+```
+
+换为 `--carrier shadowsocks` 可复测内置 SS；去掉 `--default-policy` 使用上文的显式超时。
+不传 `--carrier` 默认 VLESS/TLS。各运行仅使用本机回环，未修改代理程序代码或系统配置。

@@ -1,7 +1,7 @@
 [project]
 name = "socks5-kit"
 version = "0.1.0"
-description = "Importable SOCKS5 rewrite relay, client and callback-backed DNS server."
+description = "Importable SOCKS5 rewrite relay, reverse addon and callback DNS server."
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = []

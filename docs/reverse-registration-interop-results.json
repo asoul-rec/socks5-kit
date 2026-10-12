@@ -1,0 +1,1223 @@
+{
+  "date_utc": "2026-10-12T05:38:54.823937+00:00",
+  "python": "3.14.8",
+  "binaries": {
+    "xray": "Xray 26.9.9 (Xray, Penetrates Everything.) 52a412d (go1.27.1 linux/amd64)",
+    "v2ray": "V2Ray 5.53.0 (V2Fly, a community-driven edition of V2Ray.) Custom (go1.26.1 linux/amd64)"
+  },
+  "binary_provenance": "tcp-interop-binaries.json",
+  "historical_evidence": {
+    "path": "reverse-interop-results.json",
+    "sha256": "3d569ca744cc6df52456cd782a13c7c97e1206ada4793479b77981e30af2927b",
+    "qualification": "Original pre-registration-frame failures retained unchanged; the runs below test the new HELLO/ACK protocol."
+  },
+  "registration_protocol": {
+    "hello_hex": "53354b520101",
+    "ack_hex": "53354b520102",
+    "hello_bytes": 6,
+    "ack_bytes": 6,
+    "agent_idle_requires_ack": true
+  },
+  "registration_method": "Agent sends the 6-byte HELLO with its SOCKS CONNECT request before waiting for the local SOCKS reply, then waits for the exact 6-byte end-to-end ACK. Server sends its ordinary SOCKS reply, validates HELLO, sends ACK, then publishes the resource.",
+  "prewarm_method": "Wait for both Agent ACK-confirmed idle=2 and Server same-username idle=2, then hold 2 seconds with zero application payload; both remain 2, exactly 2 registration attempts occurred, no business egress opened, and the noauth pool remains empty.",
+  "transfer_method": "For each IPv4, IPv6, and DOMAIN target, receive the complete 38-byte server greeting before sending any application bytes, then concurrently send and receive 1 MiB, assert the original target reaches Agent egress unchanged, and wait for both idle pools to refill to 2.",
+  "test_traffic": "loopback only",
+  "listener_addresses": [
+    "127.0.0.1",
+    "::1"
+  ],
+  "username_group": "reverse-test",
+  "required_deadline_seconds": 10,
+  "required_summary": {
+    "passed": 40,
+    "failed": 0
+  },
+  "required_summary_by_proxy": {
+    "xray": {
+      "passed": 20,
+      "failed": 0
+    },
+    "v2ray": {
+      "passed": 20,
+      "failed": 0
+    }
+  },
+  "runs": [
+    {
+      "id": "vmess-explicit",
+      "timestamp_utc": "2026-10-12T05:36:55.445451+00:00",
+      "carrier": "VMess AES-128-GCM over TCP, no multiplexing",
+      "proxy_policy": {
+        "levels": {
+          "0": {
+            "handshake": 10,
+            "connIdle": 300,
+            "uplinkOnly": 10,
+            "downlinkOnly": 10
+          }
+        }
+      },
+      "source_evidence": "../../work/reverse-registration-vmess-explicit/results.json",
+      "configs_and_logs": "../../work/reverse-registration-vmess-explicit",
+      "reproduction": ".venv/bin/python tools/check_reverse_interop.py --bin-dir ../../work/interop/bin --output-dir ../../work/reverse-registration-vmess-explicit --carrier vmess",
+      "exit_code": 0,
+      "required_summary": {
+        "passed": 8,
+        "failed": 0
+      },
+      "required_checks": [
+        {
+          "proxy": "xray",
+          "case": "prewarm_without_application_payload",
+          "required": true,
+          "application_payload_bytes": 0,
+          "idle_stability_seconds": 2,
+          "elapsed_seconds": 0.0107,
+          "agent_ack_confirmed_idle_before_hold": 2,
+          "server_same_username_idle_before_hold": 2,
+          "status": "PASS",
+          "idle_for_username": 2,
+          "idle_for_noauth": 0,
+          "agent_ack_confirmed_idle_after_hold": 2,
+          "registration_hello_bytes_sent": 12,
+          "registration_attempts": 2
+        },
+        {
+          "proxy": "xray",
+          "case": "bidirectional_tcp",
+          "required": true,
+          "target": {
+            "type": "IPV4",
+            "host": "127.0.0.1",
+            "port": 55951
+          },
+          "client_to_target_bytes": 1048576,
+          "target_to_client_bytes": 1048576,
+          "server_first_bytes": 38,
+          "client_waits_for_greeting": true,
+          "bound": {
+            "type": "IPV4",
+            "host": "127.0.0.1",
+            "port": 46267
+          },
+          "agent_target": {
+            "type": "IPV4",
+            "host": "127.0.0.1",
+            "port": 55951
+          },
+          "refill_seconds": 0.0,
+          "agent_ack_confirmed_idle_after_refill": 2,
+          "server_same_username_idle_after_refill": 2,
+          "status": "PASS"
+        },
+        {
+          "proxy": "xray",
+          "case": "bidirectional_tcp",
+          "required": true,
+          "target": {
+            "type": "IPV6",
+            "host": "::1",
+            "port": 55951
+          },
+          "client_to_target_bytes": 1048576,
+          "target_to_client_bytes": 1048576,
+          "server_first_bytes": 38,
+          "client_waits_for_greeting": true,
+          "bound": {
+            "type": "IPV4",
+            "host": "127.0.0.1",
+            "port": 46267
+          },
+          "agent_target": {
+            "type": "IPV6",
+            "host": "::1",
+            "port": 55951
+          },
+          "refill_seconds": 0.0,
+          "agent_ack_confirmed_idle_after_refill": 2,
+          "server_same_username_idle_after_refill": 2,
+          "status": "PASS"
+        },
+        {
+          "proxy": "xray",
+          "case": "bidirectional_tcp",
+          "required": true,
+          "target": {
+            "type": "DOMAIN",
+            "host": "localhost",
+            "port": 55951
+          },
+          "client_to_target_bytes": 1048576,
+          "target_to_client_bytes": 1048576,
+          "server_first_bytes": 38,
+          "client_waits_for_greeting": true,
+          "bound": {
+            "type": "IPV4",
+            "host": "127.0.0.1",
+            "port": 46267
+          },
+          "agent_target": {
+            "type": "DOMAIN",
+            "host": "localhost",
+            "port": 55951
+          },
+          "refill_seconds": 0.0,
+          "agent_ack_confirmed_idle_after_refill": 2,
+          "server_same_username_idle_after_refill": 2,
+          "status": "PASS"
+        },
+        {
+          "proxy": "v2ray",
+          "case": "prewarm_without_application_payload",
+          "required": true,
+          "application_payload_bytes": 0,
+          "idle_stability_seconds": 2,
+          "elapsed_seconds": 0.0103,
+          "agent_ack_confirmed_idle_before_hold": 2,
+          "server_same_username_idle_before_hold": 2,
+          "status": "PASS",
+          "idle_for_username": 2,
+          "idle_for_noauth": 0,
+          "agent_ack_confirmed_idle_after_hold": 2,
+          "registration_hello_bytes_sent": 12,
+          "registration_attempts": 2
+        },
+        {
+          "proxy": "v2ray",
+          "case": "bidirectional_tcp",
+          "required": true,
+          "target": {
+            "type": "IPV4",
+            "host": "127.0.0.1",
+            "port": 55951
+          },
+          "client_to_target_bytes": 1048576,
+          "target_to_client_bytes": 1048576,
+          "server_first_bytes": 38,
+          "client_waits_for_greeting": true,
+          "bound": {
+            "type": "IPV4",
+            "host": "127.0.0.1",
+            "port": 58919
+          },
+          "agent_target": {
+            "type": "IPV4",
+            "host": "127.0.0.1",
+            "port": 55951
+          },
+          "refill_seconds": 0.0,
+          "agent_ack_confirmed_idle_after_refill": 2,
+          "server_same_username_idle_after_refill": 2,
+          "status": "PASS"
+        },
+        {
+          "proxy": "v2ray",
+          "case": "bidirectional_tcp",
+          "required": true,
+          "target": {
+            "type": "IPV6",
+            "host": "::1",
+            "port": 55951
+          },
+          "client_to_target_bytes": 1048576,
+          "target_to_client_bytes": 1048576,
+          "server_first_bytes": 38,
+          "client_waits_for_greeting": true,
+          "bound": {
+            "type": "IPV4",
+            "host": "127.0.0.1",
+            "port": 58919
+          },
+          "agent_target": {
+            "type": "IPV6",
+            "host": "::1",
+            "port": 55951
+          },
+          "refill_seconds": 0.0,
+          "agent_ack_confirmed_idle_after_refill": 2,
+          "server_same_username_idle_after_refill": 2,
+          "status": "PASS"
+        },
+        {
+          "proxy": "v2ray",
+          "case": "bidirectional_tcp",
+          "required": true,
+          "target": {
+            "type": "DOMAIN",
+            "host": "localhost",
+            "port": 55951
+          },
+          "client_to_target_bytes": 1048576,
+          "target_to_client_bytes": 1048576,
+          "server_first_bytes": 38,
+          "client_waits_for_greeting": true,
+          "bound": {
+            "type": "IPV4",
+            "host": "127.0.0.1",
+            "port": 58919
+          },
+          "agent_target": {
+            "type": "DOMAIN",
+            "host": "localhost",
+            "port": 55951
+          },
+          "refill_seconds": 0.0,
+          "agent_ack_confirmed_idle_after_refill": 2,
+          "server_same_username_idle_after_refill": 2,
+          "status": "PASS"
+        }
+      ],
+      "optional_checks": []
+    },
+    {
+      "id": "shadowsocks-explicit",
+      "timestamp_utc": "2026-10-12T05:36:57.060397+00:00",
+      "carrier": "Shadowsocks chacha20-ietf-poly1305 over TCP",
+      "proxy_policy": {
+        "levels": {
+          "0": {
+            "handshake": 10,
+            "connIdle": 300,
+            "uplinkOnly": 10,
+            "downlinkOnly": 10
+          }
+        }
+      },
+      "source_evidence": "../../work/reverse-registration-shadowsocks-explicit/results.json",
+      "configs_and_logs": "../../work/reverse-registration-shadowsocks-explicit",
+      "reproduction": ".venv/bin/python tools/check_reverse_interop.py --bin-dir ../../work/interop/bin --output-dir ../../work/reverse-registration-shadowsocks-explicit --carrier shadowsocks",
+      "exit_code": 0,
+      "required_summary": {
+        "passed": 8,
+        "failed": 0
+      },
+      "required_checks": [
+        {
+          "proxy": "xray",
+          "case": "prewarm_without_application_payload",
+          "required": true,
+          "application_payload_bytes": 0,
+          "idle_stability_seconds": 2,
+          "elapsed_seconds": 0.0108,
+          "agent_ack_confirmed_idle_before_hold": 2,
+          "server_same_username_idle_before_hold": 2,
+          "status": "PASS",
+          "idle_for_username": 2,
+          "idle_for_noauth": 0,
+          "agent_ack_confirmed_idle_after_hold": 2,
+          "registration_hello_bytes_sent": 12,
+          "registration_attempts": 2
+        },
+        {
+          "proxy": "xray",
+          "case": "bidirectional_tcp",
+          "required": true,
+          "target": {
+            "type": "IPV4",
+            "host": "127.0.0.1",
+            "port": 39481
+          },
+          "client_to_target_bytes": 1048576,
+          "target_to_client_bytes": 1048576,
+          "server_first_bytes": 38,
+          "client_waits_for_greeting": true,
+          "bound": {
+            "type": "IPV4",
+            "host": "127.0.0.1",
+            "port": 38337
+          },
+          "agent_target": {
+            "type": "IPV4",
+            "host": "127.0.0.1",
+            "port": 39481
+          },
+          "refill_seconds": 0.0,
+          "agent_ack_confirmed_idle_after_refill": 2,
+          "server_same_username_idle_after_refill": 2,
+          "status": "PASS"
+        },
+        {
+          "proxy": "xray",
+          "case": "bidirectional_tcp",
+          "required": true,
+          "target": {
+            "type": "IPV6",
+            "host": "::1",
+            "port": 39481
+          },
+          "client_to_target_bytes": 1048576,
+          "target_to_client_bytes": 1048576,
+          "server_first_bytes": 38,
+          "client_waits_for_greeting": true,
+          "bound": {
+            "type": "IPV4",
+            "host": "127.0.0.1",
+            "port": 38337
+          },
+          "agent_target": {
+            "type": "IPV6",
+            "host": "::1",
+            "port": 39481
+          },
+          "refill_seconds": 0.0,
+          "agent_ack_confirmed_idle_after_refill": 2,
+          "server_same_username_idle_after_refill": 2,
+          "status": "PASS"
+        },
+        {
+          "proxy": "xray",
+          "case": "bidirectional_tcp",
+          "required": true,
+          "target": {
+            "type": "DOMAIN",
+            "host": "localhost",
+            "port": 39481
+          },
+          "client_to_target_bytes": 1048576,
+          "target_to_client_bytes": 1048576,
+          "server_first_bytes": 38,
+          "client_waits_for_greeting": true,
+          "bound": {
+            "type": "IPV4",
+            "host": "127.0.0.1",
+            "port": 38337
+          },
+          "agent_target": {
+            "type": "DOMAIN",
+            "host": "localhost",
+            "port": 39481
+          },
+          "refill_seconds": 0.0,
+          "agent_ack_confirmed_idle_after_refill": 2,
+          "server_same_username_idle_after_refill": 2,
+          "status": "PASS"
+        },
+        {
+          "proxy": "v2ray",
+          "case": "prewarm_without_application_payload",
+          "required": true,
+          "application_payload_bytes": 0,
+          "idle_stability_seconds": 2,
+          "elapsed_seconds": 0.0107,
+          "agent_ack_confirmed_idle_before_hold": 2,
+          "server_same_username_idle_before_hold": 2,
+          "status": "PASS",
+          "idle_for_username": 2,
+          "idle_for_noauth": 0,
+          "agent_ack_confirmed_idle_after_hold": 2,
+          "registration_hello_bytes_sent": 12,
+          "registration_attempts": 2
+        },
+        {
+          "proxy": "v2ray",
+          "case": "bidirectional_tcp",
+          "required": true,
+          "target": {
+            "type": "IPV4",
+            "host": "127.0.0.1",
+            "port": 39481
+          },
+          "client_to_target_bytes": 1048576,
+          "target_to_client_bytes": 1048576,
+          "server_first_bytes": 38,
+          "client_waits_for_greeting": true,
+          "bound": {
+            "type": "IPV4",
+            "host": "127.0.0.1",
+            "port": 43681
+          },
+          "agent_target": {
+            "type": "IPV4",
+            "host": "127.0.0.1",
+            "port": 39481
+          },
+          "refill_seconds": 0.0,
+          "agent_ack_confirmed_idle_after_refill": 2,
+          "server_same_username_idle_after_refill": 2,
+          "status": "PASS"
+        },
+        {
+          "proxy": "v2ray",
+          "case": "bidirectional_tcp",
+          "required": true,
+          "target": {
+            "type": "IPV6",
+            "host": "::1",
+            "port": 39481
+          },
+          "client_to_target_bytes": 1048576,
+          "target_to_client_bytes": 1048576,
+          "server_first_bytes": 38,
+          "client_waits_for_greeting": true,
+          "bound": {
+            "type": "IPV4",
+            "host": "127.0.0.1",
+            "port": 43681
+          },
+          "agent_target": {
+            "type": "IPV6",
+            "host": "::1",
+            "port": 39481
+          },
+          "refill_seconds": 0.0,
+          "agent_ack_confirmed_idle_after_refill": 2,
+          "server_same_username_idle_after_refill": 2,
+          "status": "PASS"
+        },
+        {
+          "proxy": "v2ray",
+          "case": "bidirectional_tcp",
+          "required": true,
+          "target": {
+            "type": "DOMAIN",
+            "host": "localhost",
+            "port": 39481
+          },
+          "client_to_target_bytes": 1048576,
+          "target_to_client_bytes": 1048576,
+          "server_first_bytes": 38,
+          "client_waits_for_greeting": true,
+          "bound": {
+            "type": "IPV4",
+            "host": "127.0.0.1",
+            "port": 43681
+          },
+          "agent_target": {
+            "type": "DOMAIN",
+            "host": "localhost",
+            "port": 39481
+          },
+          "refill_seconds": 0.0,
+          "agent_ack_confirmed_idle_after_refill": 2,
+          "server_same_username_idle_after_refill": 2,
+          "status": "PASS"
+        }
+      ],
+      "optional_checks": []
+    },
+    {
+      "id": "vmess-default",
+      "timestamp_utc": "2026-10-12T05:37:17.382415+00:00",
+      "carrier": "VMess AES-128-GCM over TCP, no multiplexing",
+      "proxy_policy": "binary defaults",
+      "source_evidence": "../../work/reverse-registration-vmess-default/results.json",
+      "configs_and_logs": "../../work/reverse-registration-vmess-default",
+      "reproduction": ".venv/bin/python tools/check_reverse_interop.py --bin-dir ../../work/interop/bin --output-dir ../../work/reverse-registration-vmess-default --carrier vmess --default-policy",
+      "exit_code": 0,
+      "required_summary": {
+        "passed": 8,
+        "failed": 0
+      },
+      "required_checks": [
+        {
+          "proxy": "xray",
+          "case": "prewarm_without_application_payload",
+          "required": true,
+          "application_payload_bytes": 0,
+          "idle_stability_seconds": 2,
+          "elapsed_seconds": 0.0106,
+          "agent_ack_confirmed_idle_before_hold": 2,
+          "server_same_username_idle_before_hold": 2,
+          "status": "PASS",
+          "idle_for_username": 2,
+          "idle_for_noauth": 0,
+          "agent_ack_confirmed_idle_after_hold": 2,
+          "registration_hello_bytes_sent": 12,
+          "registration_attempts": 2
+        },
+        {
+          "proxy": "xray",
+          "case": "bidirectional_tcp",
+          "required": true,
+          "target": {
+            "type": "IPV4",
+            "host": "127.0.0.1",
+            "port": 40637
+          },
+          "client_to_target_bytes": 1048576,
+          "target_to_client_bytes": 1048576,
+          "server_first_bytes": 38,
+          "client_waits_for_greeting": true,
+          "bound": {
+            "type": "IPV4",
+            "host": "127.0.0.1",
+            "port": 39459
+          },
+          "agent_target": {
+            "type": "IPV4",
+            "host": "127.0.0.1",
+            "port": 40637
+          },
+          "refill_seconds": 0.0,
+          "agent_ack_confirmed_idle_after_refill": 2,
+          "server_same_username_idle_after_refill": 2,
+          "status": "PASS"
+        },
+        {
+          "proxy": "xray",
+          "case": "bidirectional_tcp",
+          "required": true,
+          "target": {
+            "type": "IPV6",
+            "host": "::1",
+            "port": 40637
+          },
+          "client_to_target_bytes": 1048576,
+          "target_to_client_bytes": 1048576,
+          "server_first_bytes": 38,
+          "client_waits_for_greeting": true,
+          "bound": {
+            "type": "IPV4",
+            "host": "127.0.0.1",
+            "port": 39459
+          },
+          "agent_target": {
+            "type": "IPV6",
+            "host": "::1",
+            "port": 40637
+          },
+          "refill_seconds": 0.0,
+          "agent_ack_confirmed_idle_after_refill": 2,
+          "server_same_username_idle_after_refill": 2,
+          "status": "PASS"
+        },
+        {
+          "proxy": "xray",
+          "case": "bidirectional_tcp",
+          "required": true,
+          "target": {
+            "type": "DOMAIN",
+            "host": "localhost",
+            "port": 40637
+          },
+          "client_to_target_bytes": 1048576,
+          "target_to_client_bytes": 1048576,
+          "server_first_bytes": 38,
+          "client_waits_for_greeting": true,
+          "bound": {
+            "type": "IPV4",
+            "host": "127.0.0.1",
+            "port": 39459
+          },
+          "agent_target": {
+            "type": "DOMAIN",
+            "host": "localhost",
+            "port": 40637
+          },
+          "refill_seconds": 0.0,
+          "agent_ack_confirmed_idle_after_refill": 2,
+          "server_same_username_idle_after_refill": 2,
+          "status": "PASS"
+        },
+        {
+          "proxy": "v2ray",
+          "case": "prewarm_without_application_payload",
+          "required": true,
+          "application_payload_bytes": 0,
+          "idle_stability_seconds": 2,
+          "elapsed_seconds": 0.0107,
+          "agent_ack_confirmed_idle_before_hold": 2,
+          "server_same_username_idle_before_hold": 2,
+          "status": "PASS",
+          "idle_for_username": 2,
+          "idle_for_noauth": 0,
+          "agent_ack_confirmed_idle_after_hold": 2,
+          "registration_hello_bytes_sent": 12,
+          "registration_attempts": 2
+        },
+        {
+          "proxy": "v2ray",
+          "case": "bidirectional_tcp",
+          "required": true,
+          "target": {
+            "type": "IPV4",
+            "host": "127.0.0.1",
+            "port": 40637
+          },
+          "client_to_target_bytes": 1048576,
+          "target_to_client_bytes": 1048576,
+          "server_first_bytes": 38,
+          "client_waits_for_greeting": true,
+          "bound": {
+            "type": "IPV4",
+            "host": "127.0.0.1",
+            "port": 60031
+          },
+          "agent_target": {
+            "type": "IPV4",
+            "host": "127.0.0.1",
+            "port": 40637
+          },
+          "refill_seconds": 0.0,
+          "agent_ack_confirmed_idle_after_refill": 2,
+          "server_same_username_idle_after_refill": 2,
+          "status": "PASS"
+        },
+        {
+          "proxy": "v2ray",
+          "case": "bidirectional_tcp",
+          "required": true,
+          "target": {
+            "type": "IPV6",
+            "host": "::1",
+            "port": 40637
+          },
+          "client_to_target_bytes": 1048576,
+          "target_to_client_bytes": 1048576,
+          "server_first_bytes": 38,
+          "client_waits_for_greeting": true,
+          "bound": {
+            "type": "IPV4",
+            "host": "127.0.0.1",
+            "port": 60031
+          },
+          "agent_target": {
+            "type": "IPV6",
+            "host": "::1",
+            "port": 40637
+          },
+          "refill_seconds": 0.0,
+          "agent_ack_confirmed_idle_after_refill": 2,
+          "server_same_username_idle_after_refill": 2,
+          "status": "PASS"
+        },
+        {
+          "proxy": "v2ray",
+          "case": "bidirectional_tcp",
+          "required": true,
+          "target": {
+            "type": "DOMAIN",
+            "host": "localhost",
+            "port": 40637
+          },
+          "client_to_target_bytes": 1048576,
+          "target_to_client_bytes": 1048576,
+          "server_first_bytes": 38,
+          "client_waits_for_greeting": true,
+          "bound": {
+            "type": "IPV4",
+            "host": "127.0.0.1",
+            "port": 60031
+          },
+          "agent_target": {
+            "type": "DOMAIN",
+            "host": "localhost",
+            "port": 40637
+          },
+          "refill_seconds": 0.0,
+          "agent_ack_confirmed_idle_after_refill": 2,
+          "server_same_username_idle_after_refill": 2,
+          "status": "PASS"
+        }
+      ],
+      "optional_checks": []
+    },
+    {
+      "id": "shadowsocks-default",
+      "timestamp_utc": "2026-10-12T05:37:17.338078+00:00",
+      "carrier": "Shadowsocks chacha20-ietf-poly1305 over TCP",
+      "proxy_policy": "binary defaults",
+      "source_evidence": "../../work/reverse-registration-shadowsocks-default/results.json",
+      "configs_and_logs": "../../work/reverse-registration-shadowsocks-default",
+      "reproduction": ".venv/bin/python tools/check_reverse_interop.py --bin-dir ../../work/interop/bin --output-dir ../../work/reverse-registration-shadowsocks-default --carrier shadowsocks --default-policy",
+      "exit_code": 0,
+      "required_summary": {
+        "passed": 8,
+        "failed": 0
+      },
+      "required_checks": [
+        {
+          "proxy": "xray",
+          "case": "prewarm_without_application_payload",
+          "required": true,
+          "application_payload_bytes": 0,
+          "idle_stability_seconds": 2,
+          "elapsed_seconds": 0.0112,
+          "agent_ack_confirmed_idle_before_hold": 2,
+          "server_same_username_idle_before_hold": 2,
+          "status": "PASS",
+          "idle_for_username": 2,
+          "idle_for_noauth": 0,
+          "agent_ack_confirmed_idle_after_hold": 2,
+          "registration_hello_bytes_sent": 12,
+          "registration_attempts": 2
+        },
+        {
+          "proxy": "xray",
+          "case": "bidirectional_tcp",
+          "required": true,
+          "target": {
+            "type": "IPV4",
+            "host": "127.0.0.1",
+            "port": 46779
+          },
+          "client_to_target_bytes": 1048576,
+          "target_to_client_bytes": 1048576,
+          "server_first_bytes": 38,
+          "client_waits_for_greeting": true,
+          "bound": {
+            "type": "IPV4",
+            "host": "127.0.0.1",
+            "port": 38795
+          },
+          "agent_target": {
+            "type": "IPV4",
+            "host": "127.0.0.1",
+            "port": 46779
+          },
+          "refill_seconds": 0.0,
+          "agent_ack_confirmed_idle_after_refill": 2,
+          "server_same_username_idle_after_refill": 2,
+          "status": "PASS"
+        },
+        {
+          "proxy": "xray",
+          "case": "bidirectional_tcp",
+          "required": true,
+          "target": {
+            "type": "IPV6",
+            "host": "::1",
+            "port": 46779
+          },
+          "client_to_target_bytes": 1048576,
+          "target_to_client_bytes": 1048576,
+          "server_first_bytes": 38,
+          "client_waits_for_greeting": true,
+          "bound": {
+            "type": "IPV4",
+            "host": "127.0.0.1",
+            "port": 38795
+          },
+          "agent_target": {
+            "type": "IPV6",
+            "host": "::1",
+            "port": 46779
+          },
+          "refill_seconds": 0.0,
+          "agent_ack_confirmed_idle_after_refill": 2,
+          "server_same_username_idle_after_refill": 2,
+          "status": "PASS"
+        },
+        {
+          "proxy": "xray",
+          "case": "bidirectional_tcp",
+          "required": true,
+          "target": {
+            "type": "DOMAIN",
+            "host": "localhost",
+            "port": 46779
+          },
+          "client_to_target_bytes": 1048576,
+          "target_to_client_bytes": 1048576,
+          "server_first_bytes": 38,
+          "client_waits_for_greeting": true,
+          "bound": {
+            "type": "IPV4",
+            "host": "127.0.0.1",
+            "port": 38795
+          },
+          "agent_target": {
+            "type": "DOMAIN",
+            "host": "localhost",
+            "port": 46779
+          },
+          "refill_seconds": 0.0,
+          "agent_ack_confirmed_idle_after_refill": 2,
+          "server_same_username_idle_after_refill": 2,
+          "status": "PASS"
+        },
+        {
+          "proxy": "v2ray",
+          "case": "prewarm_without_application_payload",
+          "required": true,
+          "application_payload_bytes": 0,
+          "idle_stability_seconds": 2,
+          "elapsed_seconds": 0.0107,
+          "agent_ack_confirmed_idle_before_hold": 2,
+          "server_same_username_idle_before_hold": 2,
+          "status": "PASS",
+          "idle_for_username": 2,
+          "idle_for_noauth": 0,
+          "agent_ack_confirmed_idle_after_hold": 2,
+          "registration_hello_bytes_sent": 12,
+          "registration_attempts": 2
+        },
+        {
+          "proxy": "v2ray",
+          "case": "bidirectional_tcp",
+          "required": true,
+          "target": {
+            "type": "IPV4",
+            "host": "127.0.0.1",
+            "port": 46779
+          },
+          "client_to_target_bytes": 1048576,
+          "target_to_client_bytes": 1048576,
+          "server_first_bytes": 38,
+          "client_waits_for_greeting": true,
+          "bound": {
+            "type": "IPV4",
+            "host": "127.0.0.1",
+            "port": 57923
+          },
+          "agent_target": {
+            "type": "IPV4",
+            "host": "127.0.0.1",
+            "port": 46779
+          },
+          "refill_seconds": 0.0,
+          "agent_ack_confirmed_idle_after_refill": 2,
+          "server_same_username_idle_after_refill": 2,
+          "status": "PASS"
+        },
+        {
+          "proxy": "v2ray",
+          "case": "bidirectional_tcp",
+          "required": true,
+          "target": {
+            "type": "IPV6",
+            "host": "::1",
+            "port": 46779
+          },
+          "client_to_target_bytes": 1048576,
+          "target_to_client_bytes": 1048576,
+          "server_first_bytes": 38,
+          "client_waits_for_greeting": true,
+          "bound": {
+            "type": "IPV4",
+            "host": "127.0.0.1",
+            "port": 57923
+          },
+          "agent_target": {
+            "type": "IPV6",
+            "host": "::1",
+            "port": 46779
+          },
+          "refill_seconds": 0.0,
+          "agent_ack_confirmed_idle_after_refill": 2,
+          "server_same_username_idle_after_refill": 2,
+          "status": "PASS"
+        },
+        {
+          "proxy": "v2ray",
+          "case": "bidirectional_tcp",
+          "required": true,
+          "target": {
+            "type": "DOMAIN",
+            "host": "localhost",
+            "port": 46779
+          },
+          "client_to_target_bytes": 1048576,
+          "target_to_client_bytes": 1048576,
+          "server_first_bytes": 38,
+          "client_waits_for_greeting": true,
+          "bound": {
+            "type": "IPV4",
+            "host": "127.0.0.1",
+            "port": 57923
+          },
+          "agent_target": {
+            "type": "DOMAIN",
+            "host": "localhost",
+            "port": 46779
+          },
+          "refill_seconds": 0.0,
+          "agent_ack_confirmed_idle_after_refill": 2,
+          "server_same_username_idle_after_refill": 2,
+          "status": "PASS"
+        }
+      ],
+      "optional_checks": []
+    },
+    {
+      "id": "vless-tls-final",
+      "timestamp_utc": "2026-10-12T05:37:30.024648+00:00",
+      "carrier": "VLESS over TLS with a test-only self-signed certificate",
+      "proxy_policy": {
+        "levels": {
+          "0": {
+            "handshake": 10,
+            "connIdle": 300,
+            "uplinkOnly": 10,
+            "downlinkOnly": 10
+          }
+        }
+      },
+      "source_evidence": "../../work/reverse-registration-vless-tls-final/results.json",
+      "configs_and_logs": "../../work/reverse-registration-vless-tls-final",
+      "reproduction": ".venv/bin/python tools/check_reverse_interop.py --bin-dir ../../work/interop/bin --output-dir ../../work/reverse-registration-vless-tls-final --carrier vless-tls --probe-half-close",
+      "exit_code": 0,
+      "required_summary": {
+        "passed": 8,
+        "failed": 0
+      },
+      "required_checks": [
+        {
+          "proxy": "xray",
+          "case": "prewarm_without_application_payload",
+          "required": true,
+          "application_payload_bytes": 0,
+          "idle_stability_seconds": 2,
+          "elapsed_seconds": 0.0105,
+          "agent_ack_confirmed_idle_before_hold": 2,
+          "server_same_username_idle_before_hold": 2,
+          "status": "PASS",
+          "idle_for_username": 2,
+          "idle_for_noauth": 0,
+          "agent_ack_confirmed_idle_after_hold": 2,
+          "registration_hello_bytes_sent": 12,
+          "registration_attempts": 2
+        },
+        {
+          "proxy": "xray",
+          "case": "bidirectional_tcp",
+          "required": true,
+          "target": {
+            "type": "IPV4",
+            "host": "127.0.0.1",
+            "port": 51287
+          },
+          "client_to_target_bytes": 1048576,
+          "target_to_client_bytes": 1048576,
+          "server_first_bytes": 38,
+          "client_waits_for_greeting": true,
+          "bound": {
+            "type": "IPV4",
+            "host": "127.0.0.1",
+            "port": 42177
+          },
+          "agent_target": {
+            "type": "IPV4",
+            "host": "127.0.0.1",
+            "port": 51287
+          },
+          "refill_seconds": 0.0,
+          "agent_ack_confirmed_idle_after_refill": 2,
+          "server_same_username_idle_after_refill": 2,
+          "status": "PASS"
+        },
+        {
+          "proxy": "xray",
+          "case": "bidirectional_tcp",
+          "required": true,
+          "target": {
+            "type": "IPV6",
+            "host": "::1",
+            "port": 51287
+          },
+          "client_to_target_bytes": 1048576,
+          "target_to_client_bytes": 1048576,
+          "server_first_bytes": 38,
+          "client_waits_for_greeting": true,
+          "bound": {
+            "type": "IPV4",
+            "host": "127.0.0.1",
+            "port": 42177
+          },
+          "agent_target": {
+            "type": "IPV6",
+            "host": "::1",
+            "port": 51287
+          },
+          "refill_seconds": 0.0102,
+          "agent_ack_confirmed_idle_after_refill": 2,
+          "server_same_username_idle_after_refill": 2,
+          "status": "PASS"
+        },
+        {
+          "proxy": "xray",
+          "case": "bidirectional_tcp",
+          "required": true,
+          "target": {
+            "type": "DOMAIN",
+            "host": "localhost",
+            "port": 51287
+          },
+          "client_to_target_bytes": 1048576,
+          "target_to_client_bytes": 1048576,
+          "server_first_bytes": 38,
+          "client_waits_for_greeting": true,
+          "bound": {
+            "type": "IPV4",
+            "host": "127.0.0.1",
+            "port": 42177
+          },
+          "agent_target": {
+            "type": "DOMAIN",
+            "host": "localhost",
+            "port": 51287
+          },
+          "refill_seconds": 0.0,
+          "agent_ack_confirmed_idle_after_refill": 2,
+          "server_same_username_idle_after_refill": 2,
+          "status": "PASS"
+        },
+        {
+          "proxy": "v2ray",
+          "case": "prewarm_without_application_payload",
+          "required": true,
+          "application_payload_bytes": 0,
+          "idle_stability_seconds": 2,
+          "elapsed_seconds": 0.0102,
+          "agent_ack_confirmed_idle_before_hold": 2,
+          "server_same_username_idle_before_hold": 2,
+          "status": "PASS",
+          "idle_for_username": 2,
+          "idle_for_noauth": 0,
+          "agent_ack_confirmed_idle_after_hold": 2,
+          "registration_hello_bytes_sent": 12,
+          "registration_attempts": 2
+        },
+        {
+          "proxy": "v2ray",
+          "case": "bidirectional_tcp",
+          "required": true,
+          "target": {
+            "type": "IPV4",
+            "host": "127.0.0.1",
+            "port": 51287
+          },
+          "client_to_target_bytes": 1048576,
+          "target_to_client_bytes": 1048576,
+          "server_first_bytes": 38,
+          "client_waits_for_greeting": true,
+          "bound": {
+            "type": "IPV4",
+            "host": "127.0.0.1",
+            "port": 56371
+          },
+          "agent_target": {
+            "type": "IPV4",
+            "host": "127.0.0.1",
+            "port": 51287
+          },
+          "refill_seconds": 0.0,
+          "agent_ack_confirmed_idle_after_refill": 2,
+          "server_same_username_idle_after_refill": 2,
+          "status": "PASS"
+        },
+        {
+          "proxy": "v2ray",
+          "case": "bidirectional_tcp",
+          "required": true,
+          "target": {
+            "type": "IPV6",
+            "host": "::1",
+            "port": 51287
+          },
+          "client_to_target_bytes": 1048576,
+          "target_to_client_bytes": 1048576,
+          "server_first_bytes": 38,
+          "client_waits_for_greeting": true,
+          "bound": {
+            "type": "IPV4",
+            "host": "127.0.0.1",
+            "port": 56371
+          },
+          "agent_target": {
+            "type": "IPV6",
+            "host": "::1",
+            "port": 51287
+          },
+          "refill_seconds": 0.0117,
+          "agent_ack_confirmed_idle_after_refill": 2,
+          "server_same_username_idle_after_refill": 2,
+          "status": "PASS"
+        },
+        {
+          "proxy": "v2ray",
+          "case": "bidirectional_tcp",
+          "required": true,
+          "target": {
+            "type": "DOMAIN",
+            "host": "localhost",
+            "port": 51287
+          },
+          "client_to_target_bytes": 1048576,
+          "target_to_client_bytes": 1048576,
+          "server_first_bytes": 38,
+          "client_waits_for_greeting": true,
+          "bound": {
+            "type": "IPV4",
+            "host": "127.0.0.1",
+            "port": 56371
+          },
+          "agent_target": {
+            "type": "DOMAIN",
+            "host": "localhost",
+            "port": 51287
+          },
+          "refill_seconds": 0.0,
+          "agent_ack_confirmed_idle_after_refill": 2,
+          "server_same_username_idle_after_refill": 2,
+          "status": "PASS"
+        }
+      ],
+      "optional_checks": [
+        {
+          "proxy": "xray",
+          "case": "EOF_triggered_response",
+          "path": "direct_P_C",
+          "required": false,
+          "target": {
+            "type": "DOMAIN",
+            "host": "localhost",
+            "port": 51287
+          },
+          "payload_bytes": 1048576,
+          "status": "LIMITATION",
+          "error": "TimeoutError()"
+        },
+        {
+          "proxy": "xray",
+          "case": "EOF_triggered_response",
+          "path": "reverse",
+          "required": false,
+          "target": {
+            "type": "DOMAIN",
+            "host": "localhost",
+            "port": 51287
+          },
+          "payload_bytes": 1048576,
+          "status": "LIMITATION",
+          "error": "TimeoutError()"
+        },
+        {
+          "proxy": "v2ray",
+          "case": "EOF_triggered_response",
+          "path": "direct_P_C",
+          "required": false,
+          "target": {
+            "type": "DOMAIN",
+            "host": "localhost",
+            "port": 51287
+          },
+          "payload_bytes": 1048576,
+          "status": "LIMITATION",
+          "error": "TimeoutError()"
+        },
+        {
+          "proxy": "v2ray",
+          "case": "EOF_triggered_response",
+          "path": "reverse",
+          "required": false,
+          "target": {
+            "type": "DOMAIN",
+            "host": "localhost",
+            "port": 51287
+          },
+          "payload_bytes": 1048576,
+          "status": "LIMITATION",
+          "error": "TimeoutError()"
+        }
+      ]
+    }
+  ],
+  "optional_EOF_response_summary": {
+    "required": false,
+    "passed": 0,
+    "limitations": 4,
+    "observation": "VLESS/TLS EOF-triggered-response probes still time out for direct P_C and reverse paths on both Xray and V2Fly. The registration exchange does not change intermediary half-close behavior; these four optional results are excluded from required checks."
+  },
+  "scope": "Observed for these exact local binaries, carrier configurations, and 2-second idle hold; no broader carrier or indefinite-idle claim."
+}

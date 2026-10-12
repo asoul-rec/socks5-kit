@@ -65,7 +65,6 @@ class Service:
 
     async def __aexit__(self, exc_type, _exc, _tb):
         self.server.close()
-        await self.server.wait_closed()
         for writer in self.writers:
             writer.close()
         pending = list(self.tasks)
@@ -77,6 +76,7 @@ class Service:
                 await writer.wait_closed()
             except ConnectionError:
                 pass
+        await self.server.wait_closed()
         if exc_type is None:
             assert not self.errors, self.errors
 

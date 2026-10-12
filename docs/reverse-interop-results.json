@@ -1,0 +1,853 @@
+{
+  "date_utc": "2026-10-11T18:51:30.877997+00:00",
+  "python": "3.14.8",
+  "binaries": {
+    "xray": "Xray 26.9.9 (Xray, Penetrates Everything.) 52a412d (go1.27.1 linux/amd64)",
+    "v2ray": "V2Ray 5.53.0 (V2Fly, a community-driven edition of V2Ray.) Custom (go1.26.1 linux/amd64)"
+  },
+  "binary_provenance": "tcp-interop-binaries.json",
+  "test_traffic": "loopback only",
+  "final_tool_listener_addresses": [
+    "127.0.0.1",
+    "::1"
+  ],
+  "username_group": "reverse-test",
+  "username_semantics": "P_S SOCKS outbound uses this username for both registration and business requests; noauth pool stays empty",
+  "payload_bytes_each_direction": 1048576,
+  "target_greeting_bytes": 38,
+  "target_hosts": {
+    "IPV4": "127.0.0.1",
+    "IPV6": "::1",
+    "DOMAIN": "localhost"
+  },
+  "target_port": "ephemeral local port varies per run; full endpoints remain in source evidence",
+  "required_deadline_seconds": 10,
+  "default_reproduction": ".venv/bin/python3.14 tools/check_reverse_interop.py --bin-dir ../../work/interop/bin --output-dir ../../work/reverse-interop-reproduction --probe-half-close",
+  "known_limitation_reproduction": ".venv/bin/python3.14 tools/check_reverse_interop.py --bin-dir ../../work/interop/bin --output-dir ../../work/reverse-interop-vmess-reproduction --carrier vmess --debug",
+  "final_default_required_checks": {
+    "passed": 8,
+    "failed": 0,
+    "exit_code": 0
+  },
+  "runs": [
+    {
+      "id": "vmess_default_greeting_first",
+      "carrier": "vmess",
+      "policy": "defaults",
+      "source_evidence": "../../work/reverse-interop/results.json",
+      "proxies": [
+        {
+          "proxy": "xray",
+          "required_pass": 1,
+          "required_fail": 3,
+          "prewarm": {
+            "status": "PASS",
+            "application_payload_bytes": 0,
+            "elapsed_seconds": 0.1158,
+            "idle_for_username": 2,
+            "idle_for_noauth": 0,
+            "idle_stability_seconds": 0,
+            "qualification": "transient registration only; stable idle was not asserted in this early run"
+          },
+          "normal_target_checks": {
+            "IPV4": {
+              "status": "FAIL",
+              "error": "AssertionError('early EOF: 0 of 38 bytes')"
+            },
+            "IPV6": {
+              "status": "FAIL",
+              "error": "AssertionError('early EOF: 0 of 38 bytes')"
+            },
+            "DOMAIN": {
+              "status": "FAIL",
+              "error": "AssertionError('early EOF: 0 of 38 bytes')"
+            }
+          },
+          "client_waits_for_greeting": true,
+          "EOF_response_probes": {
+            "direct_P_C": {
+              "status": "LIMITATION",
+              "error": "ExceptionGroup('unhandled errors in a TaskGroup', [AssertionError('early EOF: 0 of 1048576 bytes')])"
+            },
+            "reverse": {
+              "status": "LIMITATION",
+              "error": "AssertionError('early EOF: 0 of 38 bytes')"
+            }
+          }
+        },
+        {
+          "proxy": "v2ray",
+          "required_pass": 4,
+          "required_fail": 0,
+          "prewarm": {
+            "status": "PASS",
+            "application_payload_bytes": 0,
+            "elapsed_seconds": 0.1175,
+            "idle_for_username": 2,
+            "idle_for_noauth": 0,
+            "idle_stability_seconds": 0,
+            "qualification": "transient registration only; stable idle was not asserted in this early run"
+          },
+          "normal_target_checks": {
+            "IPV4": {
+              "status": "PASS",
+              "preserved_target": true,
+              "agent_target_host": "127.0.0.1"
+            },
+            "IPV6": {
+              "status": "PASS",
+              "preserved_target": true,
+              "agent_target_host": "::1"
+            },
+            "DOMAIN": {
+              "status": "PASS",
+              "preserved_target": true,
+              "agent_target_host": "localhost"
+            }
+          },
+          "client_waits_for_greeting": true,
+          "EOF_response_probes": {
+            "direct_P_C": {
+              "status": "LIMITATION",
+              "error": "ExceptionGroup('unhandled errors in a TaskGroup', [AssertionError('early EOF: 0 of 1048576 bytes')])"
+            },
+            "reverse": {
+              "status": "LIMITATION",
+              "error": "ExceptionGroup('unhandled errors in a TaskGroup', [AssertionError('early EOF: 0 of 1048576 bytes')])"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "vmess_default_debug_repeat",
+      "carrier": "vmess",
+      "policy": "defaults",
+      "source_evidence": "../../work/reverse-interop-debug/results.json",
+      "proxies": [
+        {
+          "proxy": "xray",
+          "required_pass": 1,
+          "required_fail": 3,
+          "prewarm": {
+            "status": "PASS",
+            "application_payload_bytes": 0,
+            "elapsed_seconds": 0.119,
+            "idle_for_username": 2,
+            "idle_for_noauth": 0,
+            "idle_stability_seconds": 0,
+            "qualification": "transient registration only; stable idle was not asserted in this early run"
+          },
+          "normal_target_checks": {
+            "IPV4": {
+              "status": "FAIL",
+              "error": "AssertionError('early EOF: 0 of 38 bytes')"
+            },
+            "IPV6": {
+              "status": "FAIL",
+              "error": "AssertionError('early EOF: 0 of 38 bytes')"
+            },
+            "DOMAIN": {
+              "status": "FAIL",
+              "error": "AssertionError('early EOF: 0 of 38 bytes')"
+            }
+          },
+          "client_waits_for_greeting": true
+        },
+        {
+          "proxy": "v2ray",
+          "required_pass": 4,
+          "required_fail": 0,
+          "prewarm": {
+            "status": "PASS",
+            "application_payload_bytes": 0,
+            "elapsed_seconds": 0.1191,
+            "idle_for_username": 2,
+            "idle_for_noauth": 0,
+            "idle_stability_seconds": 0,
+            "qualification": "transient registration only; stable idle was not asserted in this early run"
+          },
+          "normal_target_checks": {
+            "IPV4": {
+              "status": "PASS",
+              "preserved_target": true,
+              "agent_target_host": "127.0.0.1"
+            },
+            "IPV6": {
+              "status": "PASS",
+              "preserved_target": true,
+              "agent_target_host": "::1"
+            },
+            "DOMAIN": {
+              "status": "PASS",
+              "preserved_target": true,
+              "agent_target_host": "localhost"
+            }
+          },
+          "client_waits_for_greeting": true
+        }
+      ]
+    },
+    {
+      "id": "vmess_explicit_policy_request_first",
+      "carrier": "vmess",
+      "policy": "explicit",
+      "source_evidence": "../../work/reverse-interop-policy/results.json",
+      "proxies": [
+        {
+          "proxy": "xray",
+          "required_pass": 1,
+          "required_fail": 3,
+          "prewarm": {
+            "status": "PASS",
+            "application_payload_bytes": 0,
+            "elapsed_seconds": 0.1176,
+            "idle_for_username": 2,
+            "idle_for_noauth": 0,
+            "idle_stability_seconds": 2
+          },
+          "normal_target_checks": {
+            "IPV4": {
+              "status": "FAIL",
+              "error": "ExceptionGroup('unhandled errors in a TaskGroup', [ConnectionResetError(104, 'Connection reset by peer')])"
+            },
+            "IPV6": {
+              "status": "FAIL",
+              "error": "ExceptionGroup('unhandled errors in a TaskGroup', [ConnectionResetError(104, 'Connection reset by peer')])"
+            },
+            "DOMAIN": {
+              "status": "FAIL",
+              "error": "ExceptionGroup('unhandled errors in a TaskGroup', [ConnectionResetError(104, 'Connection reset by peer')])"
+            }
+          },
+          "client_waits_for_greeting": false
+        },
+        {
+          "proxy": "v2ray",
+          "required_pass": 4,
+          "required_fail": 0,
+          "prewarm": {
+            "status": "PASS",
+            "application_payload_bytes": 0,
+            "elapsed_seconds": 0.1074,
+            "idle_for_username": 2,
+            "idle_for_noauth": 0,
+            "idle_stability_seconds": 2
+          },
+          "normal_target_checks": {
+            "IPV4": {
+              "status": "PASS",
+              "preserved_target": true,
+              "agent_target_host": "127.0.0.1"
+            },
+            "IPV6": {
+              "status": "PASS",
+              "preserved_target": true,
+              "agent_target_host": "::1"
+            },
+            "DOMAIN": {
+              "status": "PASS",
+              "preserved_target": true,
+              "agent_target_host": "localhost"
+            }
+          },
+          "client_waits_for_greeting": false
+        }
+      ],
+      "policy_settings": {
+        "levels": {
+          "0": {
+            "handshake": 10,
+            "connIdle": 300,
+            "uplinkOnly": 10,
+            "downlinkOnly": 10
+          }
+        }
+      }
+    },
+    {
+      "id": "vless_plain_control",
+      "carrier": "vless",
+      "policy": "explicit",
+      "source_evidence": "../../work/reverse-interop-vless/results.json",
+      "proxies": [
+        {
+          "proxy": "xray",
+          "required_pass": 4,
+          "required_fail": 0,
+          "prewarm": {
+            "status": "PASS",
+            "application_payload_bytes": 0,
+            "elapsed_seconds": 0.5193,
+            "idle_for_username": 2,
+            "idle_for_noauth": 0,
+            "idle_stability_seconds": 2
+          },
+          "normal_target_checks": {
+            "IPV4": {
+              "status": "PASS",
+              "preserved_target": true,
+              "agent_target_host": "127.0.0.1"
+            },
+            "IPV6": {
+              "status": "PASS",
+              "preserved_target": true,
+              "agent_target_host": "::1"
+            },
+            "DOMAIN": {
+              "status": "PASS",
+              "preserved_target": true,
+              "agent_target_host": "localhost"
+            }
+          },
+          "client_waits_for_greeting": false,
+          "EOF_response_probes": {
+            "direct_P_C": {
+              "status": "LIMITATION",
+              "error": "TimeoutError()"
+            },
+            "reverse": {
+              "status": "LIMITATION",
+              "error": "TimeoutError()"
+            }
+          }
+        },
+        {
+          "proxy": "v2ray",
+          "required_pass": 4,
+          "required_fail": 0,
+          "prewarm": {
+            "status": "PASS",
+            "application_payload_bytes": 0,
+            "elapsed_seconds": 0.1188,
+            "idle_for_username": 2,
+            "idle_for_noauth": 0,
+            "idle_stability_seconds": 2
+          },
+          "normal_target_checks": {
+            "IPV4": {
+              "status": "PASS",
+              "preserved_target": true,
+              "agent_target_host": "127.0.0.1"
+            },
+            "IPV6": {
+              "status": "PASS",
+              "preserved_target": true,
+              "agent_target_host": "::1"
+            },
+            "DOMAIN": {
+              "status": "PASS",
+              "preserved_target": true,
+              "agent_target_host": "localhost"
+            }
+          },
+          "client_waits_for_greeting": false,
+          "EOF_response_probes": {
+            "direct_P_C": {
+              "status": "LIMITATION",
+              "error": "TimeoutError()"
+            },
+            "reverse": {
+              "status": "LIMITATION",
+              "error": "TimeoutError()"
+            }
+          }
+        }
+      ],
+      "policy_settings": {
+        "levels": {
+          "0": {
+            "handshake": 10,
+            "connIdle": 300,
+            "uplinkOnly": 10,
+            "downlinkOnly": 10
+          }
+        }
+      },
+      "encryption": "none; no TLS (transport control only)"
+    },
+    {
+      "id": "shadowsocks_encrypted",
+      "carrier": "shadowsocks",
+      "policy": "explicit",
+      "source_evidence": "../../work/reverse-interop-shadowsocks/results.json",
+      "proxies": [
+        {
+          "proxy": "xray",
+          "required_pass": 1,
+          "required_fail": 3,
+          "prewarm": {
+            "status": "PASS",
+            "application_payload_bytes": 0,
+            "elapsed_seconds": 0.1173,
+            "idle_for_username": 2,
+            "idle_for_noauth": 0,
+            "idle_stability_seconds": 2
+          },
+          "normal_target_checks": {
+            "IPV4": {
+              "status": "FAIL",
+              "error": "ExceptionGroup('unhandled errors in a TaskGroup', [ConnectionResetError(104, 'Connection reset by peer')])"
+            },
+            "IPV6": {
+              "status": "FAIL",
+              "error": "ExceptionGroup('unhandled errors in a TaskGroup', [ConnectionResetError(104, 'Connection reset by peer')])"
+            },
+            "DOMAIN": {
+              "status": "FAIL",
+              "error": "ExceptionGroup('unhandled errors in a TaskGroup', [ConnectionResetError(104, 'Connection reset by peer')])"
+            }
+          },
+          "client_waits_for_greeting": false,
+          "EOF_response_probes": {
+            "direct_P_C": {
+              "status": "LIMITATION",
+              "error": "TimeoutError()"
+            },
+            "reverse": {
+              "status": "LIMITATION",
+              "error": "AssertionError('early EOF: 0 of 38 bytes')"
+            }
+          }
+        },
+        {
+          "proxy": "v2ray",
+          "required_pass": 4,
+          "required_fail": 0,
+          "prewarm": {
+            "status": "PASS",
+            "application_payload_bytes": 0,
+            "elapsed_seconds": 0.1176,
+            "idle_for_username": 2,
+            "idle_for_noauth": 0,
+            "idle_stability_seconds": 2
+          },
+          "normal_target_checks": {
+            "IPV4": {
+              "status": "PASS",
+              "preserved_target": true,
+              "agent_target_host": "127.0.0.1"
+            },
+            "IPV6": {
+              "status": "PASS",
+              "preserved_target": true,
+              "agent_target_host": "::1"
+            },
+            "DOMAIN": {
+              "status": "PASS",
+              "preserved_target": true,
+              "agent_target_host": "localhost"
+            }
+          },
+          "client_waits_for_greeting": false,
+          "EOF_response_probes": {
+            "direct_P_C": {
+              "status": "LIMITATION",
+              "error": "TimeoutError()"
+            },
+            "reverse": {
+              "status": "LIMITATION",
+              "error": "TimeoutError()"
+            }
+          }
+        }
+      ],
+      "policy_settings": {
+        "levels": {
+          "0": {
+            "handshake": 10,
+            "connIdle": 300,
+            "uplinkOnly": 10,
+            "downlinkOnly": 10
+          }
+        }
+      }
+    },
+    {
+      "id": "vless_tls_allowInsecure_rejected",
+      "carrier": "vless-tls",
+      "policy": "explicit",
+      "source_evidence": "../../work/reverse-interop-vless-tls-allowinsecure/results.json",
+      "proxies": [
+        {
+          "proxy": "xray",
+          "required_pass": 0,
+          "required_fail": 1,
+          "lifecycle": {
+            "status": "FAIL",
+            "error": "RuntimeError('xray client startup failed; inspect /home/debian/Documents/Codex/2026-10-06/python-uv-3-14-socks5/work/reverse-interop-vless-tls/xray-client.log')"
+          }
+        },
+        {
+          "proxy": "v2ray",
+          "required_pass": 4,
+          "required_fail": 0,
+          "prewarm": {
+            "status": "PASS",
+            "application_payload_bytes": 0,
+            "elapsed_seconds": 0.1295,
+            "idle_for_username": 2,
+            "idle_for_noauth": 0,
+            "idle_stability_seconds": 2
+          },
+          "normal_target_checks": {
+            "IPV4": {
+              "status": "PASS",
+              "preserved_target": true,
+              "agent_target_host": "127.0.0.1"
+            },
+            "IPV6": {
+              "status": "PASS",
+              "preserved_target": true,
+              "agent_target_host": "::1"
+            },
+            "DOMAIN": {
+              "status": "PASS",
+              "preserved_target": true,
+              "agent_target_host": "localhost"
+            }
+          },
+          "client_waits_for_greeting": false
+        }
+      ],
+      "policy_settings": {
+        "levels": {
+          "0": {
+            "handshake": 10,
+            "connIdle": 300,
+            "uplinkOnly": 10,
+            "downlinkOnly": 10
+          }
+        }
+      },
+      "certificate_verification": "allowInsecure=true (Xray rejected this removed setting)"
+    },
+    {
+      "id": "vless_tls_explicit_certificate_trust",
+      "carrier": "vless-tls",
+      "policy": "explicit",
+      "source_evidence": "../../work/reverse-interop-vless-tls/results.json",
+      "proxies": [
+        {
+          "proxy": "xray",
+          "required_pass": 4,
+          "required_fail": 0,
+          "prewarm": {
+            "status": "PASS",
+            "application_payload_bytes": 0,
+            "elapsed_seconds": 0.5149,
+            "idle_for_username": 2,
+            "idle_for_noauth": 0,
+            "idle_stability_seconds": 2
+          },
+          "normal_target_checks": {
+            "IPV4": {
+              "status": "PASS",
+              "preserved_target": true,
+              "agent_target_host": "127.0.0.1"
+            },
+            "IPV6": {
+              "status": "PASS",
+              "preserved_target": true,
+              "agent_target_host": "::1"
+            },
+            "DOMAIN": {
+              "status": "PASS",
+              "preserved_target": true,
+              "agent_target_host": "localhost"
+            }
+          },
+          "client_waits_for_greeting": false
+        },
+        {
+          "proxy": "v2ray",
+          "required_pass": 4,
+          "required_fail": 0,
+          "prewarm": {
+            "status": "PASS",
+            "application_payload_bytes": 0,
+            "elapsed_seconds": 0.118,
+            "idle_for_username": 2,
+            "idle_for_noauth": 0,
+            "idle_stability_seconds": 2
+          },
+          "normal_target_checks": {
+            "IPV4": {
+              "status": "PASS",
+              "preserved_target": true,
+              "agent_target_host": "127.0.0.1"
+            },
+            "IPV6": {
+              "status": "PASS",
+              "preserved_target": true,
+              "agent_target_host": "::1"
+            },
+            "DOMAIN": {
+              "status": "PASS",
+              "preserved_target": true,
+              "agent_target_host": "localhost"
+            }
+          },
+          "client_waits_for_greeting": false
+        }
+      ],
+      "policy_settings": {
+        "levels": {
+          "0": {
+            "handshake": 10,
+            "connIdle": 300,
+            "uplinkOnly": 10,
+            "downlinkOnly": 10
+          }
+        }
+      },
+      "certificate_verification": "embedded test certificate trusted explicitly, usage=verify; system roots disabled; serverName=localhost"
+    },
+    {
+      "id": "final_default_tls_with_EOF_probes",
+      "carrier": "vless-tls",
+      "policy": "explicit",
+      "source_evidence": "../../work/reverse-interop-final/results.json",
+      "proxies": [
+        {
+          "proxy": "xray",
+          "required_pass": 4,
+          "required_fail": 0,
+          "prewarm": {
+            "status": "PASS",
+            "application_payload_bytes": 0,
+            "elapsed_seconds": 0.5164,
+            "idle_for_username": 2,
+            "idle_for_noauth": 0,
+            "idle_stability_seconds": 2
+          },
+          "normal_target_checks": {
+            "IPV4": {
+              "status": "PASS",
+              "preserved_target": true,
+              "agent_target_host": "127.0.0.1"
+            },
+            "IPV6": {
+              "status": "PASS",
+              "preserved_target": true,
+              "agent_target_host": "::1"
+            },
+            "DOMAIN": {
+              "status": "PASS",
+              "preserved_target": true,
+              "agent_target_host": "localhost"
+            }
+          },
+          "client_waits_for_greeting": false,
+          "EOF_response_probes": {
+            "direct_P_C": {
+              "status": "LIMITATION",
+              "error": "TimeoutError()"
+            },
+            "reverse": {
+              "status": "LIMITATION",
+              "error": "TimeoutError()"
+            }
+          }
+        },
+        {
+          "proxy": "v2ray",
+          "required_pass": 4,
+          "required_fail": 0,
+          "prewarm": {
+            "status": "PASS",
+            "application_payload_bytes": 0,
+            "elapsed_seconds": 0.115,
+            "idle_for_username": 2,
+            "idle_for_noauth": 0,
+            "idle_stability_seconds": 2
+          },
+          "normal_target_checks": {
+            "IPV4": {
+              "status": "PASS",
+              "preserved_target": true,
+              "agent_target_host": "127.0.0.1"
+            },
+            "IPV6": {
+              "status": "PASS",
+              "preserved_target": true,
+              "agent_target_host": "::1"
+            },
+            "DOMAIN": {
+              "status": "PASS",
+              "preserved_target": true,
+              "agent_target_host": "localhost"
+            }
+          },
+          "client_waits_for_greeting": false,
+          "EOF_response_probes": {
+            "direct_P_C": {
+              "status": "LIMITATION",
+              "error": "TimeoutError()"
+            },
+            "reverse": {
+              "status": "LIMITATION",
+              "error": "TimeoutError()"
+            }
+          }
+        }
+      ],
+      "policy_settings": {
+        "levels": {
+          "0": {
+            "handshake": 10,
+            "connIdle": 300,
+            "uplinkOnly": 10,
+            "downlinkOnly": 10
+          }
+        }
+      },
+      "certificate_verification": "embedded test certificate trusted explicitly, usage=verify; system roots disabled; serverName=localhost"
+    },
+    {
+      "id": "final_default_tls_loopback_listeners",
+      "carrier": "vless-tls",
+      "policy": "explicit",
+      "source_evidence": "../../work/reverse-interop-loopback-listeners/results.json",
+      "proxies": [
+        {
+          "proxy": "xray",
+          "required_pass": 4,
+          "required_fail": 0,
+          "prewarm": {
+            "status": "PASS",
+            "application_payload_bytes": 0,
+            "elapsed_seconds": 0.5169,
+            "idle_for_username": 2,
+            "idle_for_noauth": 0,
+            "idle_stability_seconds": 2
+          },
+          "normal_target_checks": {
+            "IPV4": {
+              "status": "PASS",
+              "preserved_target": true,
+              "agent_target_host": "127.0.0.1"
+            },
+            "IPV6": {
+              "status": "PASS",
+              "preserved_target": true,
+              "agent_target_host": "::1"
+            },
+            "DOMAIN": {
+              "status": "PASS",
+              "preserved_target": true,
+              "agent_target_host": "localhost"
+            }
+          },
+          "client_waits_for_greeting": false
+        },
+        {
+          "proxy": "v2ray",
+          "required_pass": 4,
+          "required_fail": 0,
+          "prewarm": {
+            "status": "PASS",
+            "application_payload_bytes": 0,
+            "elapsed_seconds": 0.1075,
+            "idle_for_username": 2,
+            "idle_for_noauth": 0,
+            "idle_stability_seconds": 2
+          },
+          "normal_target_checks": {
+            "IPV4": {
+              "status": "PASS",
+              "preserved_target": true,
+              "agent_target_host": "127.0.0.1"
+            },
+            "IPV6": {
+              "status": "PASS",
+              "preserved_target": true,
+              "agent_target_host": "::1"
+            },
+            "DOMAIN": {
+              "status": "PASS",
+              "preserved_target": true,
+              "agent_target_host": "localhost"
+            }
+          },
+          "client_waits_for_greeting": false
+        }
+      ],
+      "policy_settings": {
+        "levels": {
+          "0": {
+            "handshake": 10,
+            "connIdle": 300,
+            "uplinkOnly": 10,
+            "downlinkOnly": 10
+          }
+        }
+      },
+      "certificate_verification": "embedded test certificate trusted explicitly, usage=verify; system roots disabled; serverName=localhost"
+    }
+  ],
+  "raw_no_addon_control": {
+    "uses_reverse_agent_or_server_or_splice": false,
+    "source_evidence": "../../work/raw-carrier-control/results.json",
+    "script": "../../work/raw_carrier_control.py",
+    "reproduction": ".venv/bin/python3.14 ../../work/raw_carrier_control.py",
+    "checks": [
+      {
+        "proxy": "xray",
+        "policy": "default",
+        "path": "raw SOCKS client -> P_C -> VMess -> P_S -> raw SOCKS service",
+        "uses_reverse_agent_or_server": false,
+        "status": "FAIL",
+        "error": "AssertionError(\"unexpected idle data/EOF: b''\")"
+      },
+      {
+        "proxy": "xray",
+        "policy": "ten-second",
+        "path": "raw SOCKS client -> P_C -> VMess -> P_S -> raw SOCKS service",
+        "uses_reverse_agent_or_server": false,
+        "idle": "PASS",
+        "idle_seconds": 2.0026,
+        "reverse_connect_delivered": true,
+        "response_send_completed": true,
+        "status": "FAIL",
+        "error": "TimeoutError()"
+      },
+      {
+        "proxy": "v2ray",
+        "policy": "default",
+        "path": "raw SOCKS client -> P_C -> VMess -> P_S -> raw SOCKS service",
+        "uses_reverse_agent_or_server": false,
+        "idle": "PASS",
+        "idle_seconds": 2.0025,
+        "reverse_connect_delivered": true,
+        "response_send_completed": true,
+        "response": "PASS",
+        "status": "PASS"
+      },
+      {
+        "proxy": "v2ray",
+        "policy": "ten-second",
+        "path": "raw SOCKS client -> P_C -> VMess -> P_S -> raw SOCKS service",
+        "uses_reverse_agent_or_server": false,
+        "idle": "PASS",
+        "idle_seconds": 2.0025,
+        "reverse_connect_delivered": true,
+        "response_send_completed": true,
+        "response": "PASS",
+        "status": "PASS"
+      }
+    ]
+  },
+  "VMess_observation": "Xray default raw carrier closes before 2 seconds without initial payload. With 10-second one-direction policy, manual reverse CONNECT is delivered but the manually sent response never reaches the raw SOCKS service. V2Fly passes both raw controls. No reverse module or splice is used in this control.",
+  "source_inference": {
+    "qualification": "Inference from fixed-tag source and runtime controls, not a claim for other releases or configurations",
+    "explanation": "Xray's timed raw reader returns an empty buffer without an error when the first-payload wait expires. CopyOnceTimeout passes it to the authenticated writer, whose empty chunk is interpreted as EOF. This suggests premature uplink termination and the observed downlink-only policy cancellation.",
+    "sources": [
+      "https://raw.githubusercontent.com/XTLS/Xray-core/v26.9.9/common/buf/io.go",
+      "https://raw.githubusercontent.com/XTLS/Xray-core/v26.9.9/common/buf/copy.go",
+      "https://raw.githubusercontent.com/XTLS/Xray-core/v26.9.9/common/crypto/auth.go",
+      "https://raw.githubusercontent.com/XTLS/Xray-core/v26.9.9/proxy/vmess/outbound/outbound.go"
+    ]
+  },
+  "EOF_response_observation": "Final VLESS/TLS direct P_C and reverse probes time out for both brands. They are optional LIMITATION results and are not included in the 8 required checks. No production behavior was changed to hide these limitations."
+}
