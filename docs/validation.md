@@ -256,3 +256,44 @@ uv run python tools/check_reverse_interop.py \
 
 换为 `--carrier shadowsocks` 可复测内置 SS；去掉 `--default-policy` 使用上文的显式超时。
 不传 `--carrier` 默认 VLESS/TLS。各运行仅使用本机回环，未修改代理程序代码或系统配置。
+
+### 退避期间单连接试探
+
+注册失败或空闲断连后的重试改为每次仅建立一条连接，并等待其 SOCKS/ACK 完成或失败。
+已有批次中尚未完成的注册继续运行，退避时不再额外并发建连；收到有效 ACK 后恢复正常批量补池。
+已有业务 CONNECT 只唤醒调度，不会清除注册退避。正常连接数不足时仍立即按额度补足。
+
+新增两个实际回环检查，覆盖等待 ACK 超过重试期限、反复唤醒仍只保留一个试探、
+失败后的间隔、ACK 后补足缺口，以及业务 CONNECT 不绕过退避。
+全量 **712 passed，无跳过**，使用 asyncio debug、Python dev 模式和 `-W error`；Ruff 和格式检查通过。
+
+### 空池业务请求有界排队
+
+Server 默认按同一 user 的 FIFO 队列等待资源，`queue_timeout=10` 秒，
+`max_pending_connections=1024`。新资源仍随机选取，先原子预留给最早的请求再唤醒。
+排队名额有独立上限，也计入 `max_connections`；有效队列上限保留一个注册接入位置。
+超时或队列已满以一般失败拒绝，最大接入数已满仍直接关闭新连接。
+超时、处理任务取消、资源交付竞态和服务关闭均回收名额与已预留资源。
+排队不预读业务数据，保留 kernel socket 缓冲及合法写半关闭。
+
+新增 14 项真实网络/内核检查，覆盖等待注册、超时后不误领后来的资源、FIFO、user 隔离、
+全局队列限额、最大连接数及注册余量、取消/交付竞态、关闭宽限和 FD 回收。
+包括实际 Agent 启动后接管已排队的 SOCKS 客户端请求，通过真实 splice 透传首包与响应。
+既有立即拒绝测试显式设置 `max_pending_connections=0`，保留禁用排队时的行为检查。
+全量 **739 passed，无跳过**，使用 asyncio debug、Python dev 模式和 `-W error`；
+旧 SOCKS、DNS、Agent 退避与注册协商检查均通过。
+
+### 预注册与业务共享 slot 配额
+
+每 user 的占用改为 `max(注册连接数, 已接纳业务数)`，全局占用为各 user 的结果之和。
+注册计数覆盖 HELLO/ACK、空闲及已领取连接；业务在入队/领取前就预占名额，
+覆盖排队、目标协商和转发，直到结束或取消。超过 `max_resources` 或
+`max_resources_per_user` 立即拒绝，不进入队列。新注册可覆盖已有业务名额，反之亦然。
+因此同 user 的 32 条注册和 32 条业务计 32 个 slot；不同 user 的两组则计 64。
+物理接入数量仍单独受 `max_connections` 约束。
+
+新增 9 项真实网络检查，包含 per-user 配额 32 的 burst 拒绝、两种到达顺序、
+满额配对不重复扣配额、不同 user 的全局占用、目标协商/转发期间保留名额、
+超时/取消/队列满后的释放，以及交付竞态中的两侧配额与 FD 回收。
+全量 **748 passed，无跳过**，使用 asyncio debug、Python dev 模式和 `-W error`；
+Ruff 与格式检查通过。

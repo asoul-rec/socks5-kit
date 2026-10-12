@@ -5,6 +5,7 @@ import hashlib
 import os
 import random
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from ipaddress import IPv4Address, IPv6Address
 
 import pytest
@@ -32,6 +33,12 @@ from tests.test_tcp import (
 pytestmark = pytest.mark.tcp_loopback
 REGISTRATION = Target(DEFAULT_REVERSE_DOMAIN, 443)
 DESTINATION = Target("destination.example", 80)
+
+
+def immediate_server(*args, options=None, **kwargs):
+    """Exercise immediate empty-pool rejection in these dispatch-focused tests."""
+    options = replace(options or ReverseServerOptions(), max_pending_connections=0)
+    return ReverseServer(*args, options=options, **kwargs)
 
 
 async def eventually(predicate):
@@ -111,7 +118,7 @@ async def failed_request(server, target=DESTINATION, **kwargs):
 
 def test_fragmented_hello_is_not_published_before_complete_registration():
     async def scenario():
-        async with ReverseServer() as server:
+        async with immediate_server() as server:
             await server.start(port=0)
             reader, writer, reply, _bound = await connect_request(server, REGISTRATION)
             try:
@@ -166,7 +173,7 @@ def test_failed_hello_closes_after_socks_success_without_ack_or_second_reply(
         options = ReverseServerOptions(
             registration_timeout=0.03, max_resources=1, max_resources_per_user=1
         )
-        async with ReverseServer(options=options) as server:
+        async with immediate_server(options=options) as server:
             await server.start(port=0)
             reader, writer, reply, _bound = await connect_request(
                 server, REGISTRATION, user=b"pending"
@@ -194,7 +201,7 @@ def test_failed_hello_closes_after_socks_success_without_ack_or_second_reply(
 def test_pending_hello_reserves_global_and_user_quotas_without_serving_business():
     async def scenario():
         options = ReverseServerOptions(max_resources=2, max_resources_per_user=1)
-        async with ReverseServer(options=options) as server:
+        async with immediate_server(options=options) as server:
             await server.start(port=0)
             reader, writer, reply, _bound = await connect_request(
                 server, REGISTRATION, user=b"one"
@@ -224,7 +231,7 @@ def test_pending_hello_reserves_global_and_user_quotas_without_serving_business(
 
 def test_hello_with_trailing_bytes_acknowledges_exact_frame_then_retires_resource():
     async def scenario():
-        async with ReverseServer() as server:
+        async with immediate_server() as server:
             await server.start(port=0)
             reader, writer, reply, _bound = await connect_request(
                 server, REGISTRATION, payload=REGISTRATION_HELLO + b"unsolicited bytes"
@@ -257,7 +264,7 @@ def test_registered_resource_preserves_target_bound_and_coalesced_payload(target
         prefix = b"server-first greeting\x00\xff"
         payload = bytes(range(256)) * 8192
         bound = BoundAddress(IPv6Address("2001:db8::20"), 3456)
-        async with ReverseServer() as server:
+        async with immediate_server() as server:
             await server.start(port=0)
             async with resource(server) as (agent_reader, agent_writer):
                 business = asyncio.create_task(
@@ -291,7 +298,7 @@ def test_registered_resource_preserves_target_bound_and_coalesced_payload(target
 @pytest.mark.parametrize("user", [None, b"", b"team-a", b"Team-A", b"\xff\x00"])
 def test_only_same_raw_username_can_claim_a_resource(user):
     async def scenario():
-        async with ReverseServer() as server:
+        async with immediate_server() as server:
             await server.start(port=0)
             async with resource(server, user=user, password=b"registration-secret") as (
                 agent_reader,
@@ -334,7 +341,7 @@ def test_resource_selection_is_random_and_consumes_each_resource_once(monkeypatc
             return stop - 1
 
         monkeypatch.setattr(random, "randrange", choose_last)
-        async with ReverseServer() as server:
+        async with immediate_server() as server:
             await server.start(port=0)
             async with (
                 resource(server) as (first_reader, first_writer),
@@ -363,7 +370,7 @@ def test_resource_selection_is_random_and_consumes_each_resource_once(monkeypatc
 def test_claimed_resource_failure_never_retries_other_idle_resources(failure):
     async def scenario():
         options = ReverseServerOptions(request_timeout=0.05)
-        async with ReverseServer(options=options) as server:
+        async with immediate_server(options=options) as server:
             await server.start(port=0)
             async with resource(server) as (agent_reader, agent_writer):
                 business = asyncio.create_task(failed_request(server))
@@ -391,7 +398,7 @@ def test_claimed_resource_failure_never_retries_other_idle_resources(failure):
 @pytest.mark.parametrize("command", [Command.BIND, Command.UDP_ASSOCIATE, 99])
 def test_unsupported_commands_do_not_consume_registered_resources(command):
     async def scenario():
-        async with ReverseServer() as server:
+        async with immediate_server() as server:
             await server.start(port=0)
             async with resource(server):
                 assert await failed_request(server, command=command) == 7
@@ -402,7 +409,7 @@ def test_unsupported_commands_do_not_consume_registered_resources(command):
 
 def test_registration_domain_is_case_and_trailing_dot_insensitive_port_independent():
     async def scenario():
-        async with ReverseServer("ReVeRsE.Example.COM.") as server:
+        async with immediate_server("ReVeRsE.Example.COM.") as server:
             await server.start(port=0)
             async with resource(server, target=Target("reverse.example.com", 1234)):
                 async with resource(
@@ -415,7 +422,7 @@ def test_registration_domain_is_case_and_trailing_dot_insensitive_port_independe
 
 def test_idle_eof_releases_quota_and_new_registration_replaces_it():
     async def scenario():
-        async with ReverseServer(
+        async with immediate_server(
             options=ReverseServerOptions(max_resources=1)
         ) as server:
             await server.start(port=0)
@@ -431,7 +438,7 @@ def test_idle_eof_releases_quota_and_new_registration_replaces_it():
 def test_user_resource_quota_includes_claimed_resources_and_is_per_user():
     async def scenario():
         options = ReverseServerOptions(max_resources=2, max_resources_per_user=1)
-        async with ReverseServer(options=options) as server:
+        async with immediate_server(options=options) as server:
             await server.start(port=0)
             async with resource(server, user=b"one") as (agent_reader, agent_writer):
                 business = asyncio.create_task(failed_request(server, user=b"one"))
@@ -454,7 +461,7 @@ def test_user_resource_quota_includes_claimed_resources_and_is_per_user():
 def test_idle_timeout_removes_resource_without_sending_keepalive_bytes():
     async def scenario():
         options = ReverseServerOptions(idle_timeout=0.03)
-        async with ReverseServer(options=options) as server:
+        async with immediate_server(options=options) as server:
             await server.start(port=0)
             async with resource(server) as (reader, _writer):
                 assert await reader.read() == b""
@@ -467,7 +474,7 @@ def test_idle_timeout_removes_resource_without_sending_keepalive_bytes():
 def test_shutdown_closes_idle_and_claimed_resources_and_reclaims_descriptors():
     async def scenario():
         baseline = len(os.listdir("/proc/self/fd"))
-        server = ReverseServer()
+        server = immediate_server()
         await server.start(port=0)
         async with (
             resource(server, user=b"busy") as (busy_reader, _busy_writer),
@@ -563,7 +570,7 @@ def test_agent_and_server_use_proxy_for_registration_and_target_with_half_close(
             writer.write(hashlib.sha256(received).digest())
             await writer.drain()
 
-        async with Service(destination) as target_service, ReverseServer() as server:
+        async with Service(destination) as target_service, immediate_server() as server:
             await server.start(port=0)
             routing = LocalProxy(server, target_service.port)
             async with Service(routing) as proxy:
@@ -606,7 +613,7 @@ def test_agent_total_quota_prevents_refill_until_active_business_finishes():
                 writer.write(data)
                 await writer.drain()
 
-        async with Service(echo) as target_service, ReverseServer() as server:
+        async with Service(echo) as target_service, immediate_server() as server:
             await server.start(port=0)
             routing = LocalProxy(server, target_service.port)
             async with Service(routing) as proxy:
@@ -640,7 +647,7 @@ def test_agent_total_quota_prevents_refill_until_active_business_finishes():
 
 def test_agent_recovers_from_registration_and_target_rejections_without_new_traffic():
     async def scenario():
-        async with ReverseServer() as server:
+        async with immediate_server() as server:
             await server.start(port=0)
             routing = LocalProxy(server, registration_failures=2)
             routing.reject_business = 5

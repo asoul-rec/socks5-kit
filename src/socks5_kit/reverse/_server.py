@@ -5,6 +5,7 @@ import functools
 import logging
 import random
 import socket
+from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Self
 
@@ -39,6 +40,14 @@ class _Resource:
     timer: asyncio.TimerHandle | None = None
 
 
+@dataclass(eq=False, slots=True)
+class _Pending:
+    user: User
+    ready: asyncio.Future[_Resource]
+    resource: _Resource | None = None
+    queued: bool = True
+
+
 class ReverseServer:
     """Register reverse streams or dispatch business CONNECTs by raw username.
 
@@ -64,6 +73,11 @@ class ReverseServer:
         self._resources: set[_Resource] = set()
         self._pools: dict[User, list[_Resource]] = {}
         self._resource_counts: dict[User, int] = {}
+        self._business_counts: dict[User, int] = {}
+        self._business_count = 0
+        self._slots_in_use = 0
+        self._pending: dict[User, OrderedDict[_Pending, None]] = {}
+        self._pending_count = 0
         self._lock = asyncio.Lock()
         self._stopped = asyncio.Event()
         self._state = "new"
@@ -94,6 +108,29 @@ class ReverseServer:
     @property
     def idle_connections(self) -> int:
         return sum(map(len, self._pools.values()))
+
+    @property
+    def pending_connections(self) -> int:
+        """Business requests queued while their exact username has no resource."""
+        return self._pending_count
+
+    @property
+    def business_connections(self) -> int:
+        """Admitted business requests: queued, connecting their target or relaying."""
+        return self._business_count
+
+    @property
+    def slots_in_use(self) -> int:
+        """Global resource quota usage, summed over independently owned user slots."""
+        return self._slots_in_use
+
+    def slot_count(self, user: User = None) -> int:
+        """Quota slots for this exact user: max(registrations, business requests)."""
+        if user is not None and not isinstance(user, bytes):
+            raise TypeError("user must be bytes or None")
+        return max(
+            self._resource_counts.get(user, 0), self._business_counts.get(user, 0)
+        )
 
     def idle_count(self, user: User = None) -> int:
         """Count idle resources for this exact user; None selects the default."""
@@ -183,16 +220,44 @@ class ReverseServer:
         if not task.cancelled() and (error := task.exception()) is not None:
             logger.error("unhandled reverse session error", exc_info=error)
 
+    def _check_slot_limit(self, user: User, registrations: int, business: int) -> int:
+        slots = max(registrations, business)
+        added = slots - self.slot_count(user)
+        limit = self._options.max_resources_per_user
+        if (limit is not None and slots > limit) or (
+            self._slots_in_use + added > self._options.max_resources
+        ):
+            raise ProtocolError("reverse resource slot limit reached")
+        return added
+
+    def _admit_business(self, user: User) -> None:
+        count = self._business_counts.get(user, 0)
+        added = self._check_slot_limit(
+            user, self._resource_counts.get(user, 0), count + 1
+        )
+        self._business_counts[user] = count + 1
+        self._business_count += 1
+        self._slots_in_use += added
+
+    def _release_business(self, user: User) -> None:
+        before = self.slot_count(user)
+        remaining = self._business_counts[user] - 1
+        if remaining:
+            self._business_counts[user] = remaining
+        else:
+            del self._business_counts[user]
+        self._business_count -= 1
+        self._slots_in_use += self.slot_count(user) - before
+
     def _reserve(self, connection: socket.socket, user: User) -> _Resource:
         count = self._resource_counts.get(user, 0)
-        limit = self._options.max_resources_per_user
-        if len(self._resources) >= self._options.max_resources or (
-            limit is not None and count >= limit
-        ):
-            raise ProtocolError("reverse resource limit reached")
+        added = self._check_slot_limit(
+            user, count + 1, self._business_counts.get(user, 0)
+        )
         resource = _Resource(connection, user, self._check_loop().create_future())
         self._resources.add(resource)
         self._resource_counts[user] = count + 1
+        self._slots_in_use += added
         return resource
 
     def _publish(self, resource: _Resource) -> None:
@@ -207,6 +272,58 @@ class ReverseServer:
             resource.timer = loop.call_later(
                 self._options.idle_timeout, self._retire, resource
             )
+        self._dispatch_pending(resource.user)
+
+    def _remove_pending(self, pending: _Pending) -> None:
+        if not pending.queued:
+            return
+        queue = self._pending[pending.user]
+        del queue[pending]
+        if not queue:
+            del self._pending[pending.user]
+        pending.queued = False
+        self._pending_count -= 1
+
+    def _dispatch_pending(self, user: User) -> None:
+        while queue := self._pending.get(user):
+            pending = next(iter(queue))
+            if pending.ready.done():
+                self._remove_pending(pending)
+                continue
+            resource = self._take(user)
+            if resource is None:
+                return
+            self._remove_pending(pending)
+            # Reserve for the oldest request before waking it, so a newer
+            # request cannot steal the resource. The pending object also owns
+            # it until the awaiting coroutine actually resumes.
+            pending.resource = resource
+            pending.ready.set_result(resource)
+
+    async def _wait_for_resource(self, user: User) -> _Resource:
+        if resource := self._take(user):
+            return resource
+        # Waiting requests retain accepted sockets. Leave an admission slot
+        # when only waiters remain so a new registration can replenish them.
+        limit = min(
+            self._options.max_pending_connections, self._options.max_connections - 1
+        )
+        if self._pending_count >= limit:
+            raise ProtocolError("reverse request queue is full")
+        pending = _Pending(user, self._check_loop().create_future())
+        self._pending.setdefault(user, OrderedDict())[pending] = None
+        self._pending_count += 1
+        try:
+            async with asyncio.timeout(self._options.queue_timeout):
+                return await pending.ready
+        except BaseException:
+            # Cancellation/timeout can race with delivery after the resource
+            # was removed from the idle pool but before this task resumed.
+            if pending.resource is not None:
+                self._retire(pending.resource)
+            raise
+        finally:
+            self._remove_pending(pending)
 
     def _remove_idle(self, resource: _Resource) -> None:
         if resource.index is not None:
@@ -260,16 +377,19 @@ class ReverseServer:
         resource.state = "closed"
         resource.socket.close()
         self._resources.discard(resource)
+        before = self.slot_count(resource.user)
         remaining = self._resource_counts[resource.user] - 1
         if remaining:
             self._resource_counts[resource.user] = remaining
         else:
             del self._resource_counts[resource.user]
+        self._slots_in_use += self.slot_count(resource.user) - before
         if not resource.done.done():
             resource.done.set_result(None)
 
     async def _serve_connection(self, connection: socket.socket) -> None:
         negotiated = reply_started = False
+        business_admitted = False
         resource: _Resource | None = None
         relay: SpliceRelay | None = None
         try:
@@ -313,9 +433,9 @@ class ReverseServer:
                 # Claiming removes its idle FD watcher before any business I/O.
                 await resource.done
             else:
-                resource = self._take(user)
-                if resource is None:
-                    raise ProtocolError("no idle reverse resource for this user")
+                self._admit_business(user)
+                business_admitted = True
+                resource = await self._wait_for_resource(user)
                 async with asyncio.timeout(self._options.request_timeout):
                     await loop.sock_sendall(resource.socket, encode_connect(target))
                     bound = await read_reply(resource.socket)
@@ -349,6 +469,8 @@ class ReverseServer:
             if resource is not None:
                 self._retire(resource)
             connection.close()
+            if business_admitted:
+                self._release_business(user)
 
     async def serve_forever(self) -> None:
         self._check_loop()
@@ -387,6 +509,10 @@ class ReverseServer:
             if self._listener is not None:
                 self._listener.close()
                 self._listener = None
+            for queue in tuple(self._pending.values()):
+                for pending in tuple(queue):
+                    self._remove_pending(pending)
+                    pending.ready.cancel()
             for resource in tuple(self._resources):
                 if resource.state != "claimed":
                     if (

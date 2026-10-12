@@ -9,7 +9,7 @@ import pytest
 
 from socks5_kit._io import read_exact
 from socks5_kit.protocol import encode_reply
-from socks5_kit.reverse import ReverseServer, ReverseServerOptions
+from socks5_kit.reverse import ReverseServerOptions
 from socks5_kit.reverse._common import REGISTRATION_HELLO
 from tests.test_reverse_tcp import (
     DESTINATION,
@@ -18,6 +18,7 @@ from tests.test_reverse_tcp import (
     connect_request,
     eventually,
     failed_request,
+    immediate_server,
     resource,
     reverse_request,
 )
@@ -32,7 +33,7 @@ def test_graceful_shutdown_closes_pending_registration_without_waiting_for_hello
 ):
     async def scenario():
         baseline = len(os.listdir("/proc/self/fd"))
-        server = ReverseServer(options=ReverseServerOptions(max_resources=1))
+        server = immediate_server(options=ReverseServerOptions(max_resources=1))
         await server.start(port=0)
         reader, writer, reply, _bound = await connect_request(
             server, REGISTRATION, payload=partial_hello
@@ -56,7 +57,7 @@ def test_graceful_shutdown_closes_pending_registration_without_waiting_for_hello
 def test_cancelled_registration_handler_releases_pending_user_reservation():
     async def scenario():
         options = ReverseServerOptions(max_resources=1, max_resources_per_user=1)
-        async with ReverseServer(options=options) as server:
+        async with immediate_server(options=options) as server:
             await server.start(port=0)
             reader, writer, reply, _bound = await connect_request(
                 server, REGISTRATION, user=b"cancelled", payload=REGISTRATION_HELLO[:3]
@@ -83,7 +84,7 @@ def test_cancelled_registration_handler_releases_pending_user_reservation():
 def test_server_grace_keeps_relay_live_and_cancelled_close_reclaims_fds(cancel_close):
     async def scenario():
         baseline = len(os.listdir("/proc/self/fd"))
-        async with ReverseServer() as server:
+        async with immediate_server() as server:
             await server.start(port=0)
             async with resource(server) as (agent_reader, agent_writer):
                 business = asyncio.create_task(connect_request(server, DESTINATION))
@@ -134,7 +135,7 @@ def test_server_grace_keeps_relay_live_and_cancelled_close_reclaims_fds(cancel_c
 def test_idle_removal_updates_index_of_resource_swapped_from_pool_end(monkeypatch):
     async def scenario():
         monkeypatch.setattr(random, "randrange", lambda _stop: 0)
-        async with ReverseServer() as server:
+        async with immediate_server() as server:
             await server.start(port=0)
             async with (
                 resource(server) as (_first_reader, first_writer),
@@ -167,7 +168,7 @@ def test_selection_skips_ready_stale_resource_and_old_watcher_cannot_steal_io(
 ):
     async def scenario():
         monkeypatch.setattr(random, "randrange", lambda _stop: 0)
-        async with ReverseServer(
+        async with immediate_server(
             options=ReverseServerOptions(idle_timeout=60)
         ) as server:
             await server.start(port=0)

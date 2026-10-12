@@ -115,9 +115,16 @@ class ReverseAgent:
                 self._options.max_connections - self.connection_count,
             )
             if needed > 0:
+                retrying = self._retry_at > 0
+                if retrying and "opening" in self._resources.values():
+                    # A probe must finish its SOCKS/ACK exchange before another
+                    # starts, even if the retry deadline has already elapsed.
+                    # Also let registrations from the preceding batch finish.
+                    await self._wake.wait()
+                    continue
                 delay = self._retry_at - loop.time()
                 if delay <= 0:
-                    for _ in range(needed):
+                    for _ in range(1 if retrying else needed):
                         task = loop.create_task(self._serve_resource())
                         # Reserve capacity before the coroutine can start. A task
                         # cancelled before entry owns no socket or pipe yet.
@@ -191,10 +198,9 @@ class ReverseAgent:
                 target = Target(address.host, address.port)
             self._resources[task] = "busy"
             busy = True
-            self._retry_delay = self._options.reconnect_initial_delay
-            self._retry_at = 0.0
             # Refill as soon as a complete request consumes this resource, in
-            # parallel with the potentially slow destination connection.
+            # parallel with the potentially slow destination connection. Only
+            # a registration ACK restores normal refill after a failure.
             self._wake.set()
             destination = await self._egress_proxy.connect(target)
             relay = SpliceRelay(

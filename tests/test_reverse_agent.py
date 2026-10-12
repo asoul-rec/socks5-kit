@@ -235,6 +235,137 @@ def test_registration_retries_with_backoff_without_business_requests():
     run(scenario)
 
 
+def test_backoff_probes_are_single_inflight_until_ack_restores_batch_refill():
+    async def scenario():
+        attempts = []
+        pending = asyncio.Queue()
+
+        async def registration(reader, writer):
+            await upstream_request(reader, writer)
+            assert (
+                await reader.readexactly(len(REGISTRATION_HELLO)) == REGISTRATION_HELLO
+            )
+            attempts.append(asyncio.get_running_loop().time())
+            if len(attempts) <= 4:
+                writer.write(encode_reply(0) + REGISTRATION_HELLO)
+                await writer.drain()
+                assert await reader.read() == b""
+                return
+            writer.write(encode_reply(0))
+            await writer.drain()
+            pending.put_nowait((reader, writer, attempts[-1]))
+            await asyncio.Event().wait()
+
+        options = ReverseAgentOptions(
+            idle_connections=4,
+            max_connections=4,
+            registration_timeout=1,
+            reconnect_initial_delay=0.03,
+            reconnect_max_delay=0.06,
+        )
+        async with Service(registration) as proxy:
+            async with ReverseAgent(
+                REGISTRATION, Socks5Client("127.0.0.1", proxy.port), options=options
+            ) as agent:
+                await agent.start()
+                first_reader, first_writer, _started = await pending.get()
+                assert len(attempts) == proxy.connections == 5
+                assert agent.connection_count == 1
+                # Even after the retry deadline, unrelated scheduler wakes must
+                # not fill the remaining three slots while this ACK is pending.
+                for _ in range(3):
+                    agent._wake.set()
+                    await asyncio.sleep(0.04)
+                assert len(attempts) == proxy.connections == 5
+                assert agent.idle_connections == 0
+
+                rejected_at = asyncio.get_running_loop().time()
+                first_writer.write(REGISTRATION_HELLO)
+                await first_writer.drain()
+                assert await first_reader.read() == b""
+                _second_reader, second_writer, started = await pending.get()
+                assert started - rejected_at >= 0.05
+                assert len(attempts) == proxy.connections == 6
+                await asyncio.sleep(0.08)
+                assert len(attempts) == proxy.connections == 6
+                assert agent.connection_count == 1
+
+                # A real ACK ends probe mode; the other three slots should now
+                # open concurrently without another backoff interval.
+                second_writer.write(REGISTRATION_ACK)
+                await second_writer.drain()
+                async with asyncio.timeout(0.2):
+                    for _ in range(3):
+                        _reader, writer, _started = await pending.get()
+                        writer.write(REGISTRATION_ACK)
+                        await writer.drain()
+                await eventually(lambda: agent.idle_connections == 4)
+                assert agent.connection_count == 4
+                assert len(attempts) == proxy.connections == 9
+
+    run(scenario)
+
+
+def test_existing_business_connect_does_not_bypass_registration_backoff():
+    async def scenario():
+        pending = asyncio.Queue()
+
+        async def registration(reader, writer):
+            await upstream_request(reader, writer)
+            assert (
+                await reader.readexactly(len(REGISTRATION_HELLO)) == REGISTRATION_HELLO
+            )
+            writer.write(encode_reply(0))
+            await writer.drain()
+            pending.put_nowait((reader, writer))
+            await asyncio.Event().wait()
+
+        async def egress(reader, writer):
+            await upstream_request(reader, writer)
+            writer.write(encode_reply(5))
+            await writer.drain()
+
+        options = ReverseAgentOptions(
+            idle_connections=2,
+            max_connections=3,
+            reconnect_initial_delay=0.5,
+            reconnect_max_delay=0.5,
+        )
+        async with (
+            Service(registration) as proxy,
+            Service(egress) as destination,
+            ReverseAgent(
+                REGISTRATION,
+                Socks5Client("127.0.0.1", proxy.port),
+                egress_proxy=Socks5Client("127.0.0.1", destination.port),
+                options=options,
+            ) as agent,
+        ):
+            await agent.start()
+            reader, writer = await pending.get()
+            failed_reader, failed_writer = await pending.get()
+            writer.write(REGISTRATION_ACK)
+            await writer.drain()
+            await eventually(lambda: agent.idle_connections == 1)
+            failed_writer.write(REGISTRATION_HELLO)
+            await failed_writer.drain()
+            assert await failed_reader.read() == b""
+            await eventually(lambda: agent.connection_count == 1)
+
+            writer.write(encode_connect(Target("refused.test", 80)))
+            await writer.drain()
+            assert (await downstream_reply(reader))[0] == 5
+            assert await reader.read() == b""
+            await eventually(lambda: agent.connection_count == 0)
+            with pytest.raises(TimeoutError):
+                async with asyncio.timeout(0.1):
+                    await pending.get()
+            assert proxy.connections == 2
+            assert destination.connections == 1
+
+    run(scenario)
+
+
 def test_optimistic_socks_success_is_not_idle_until_fragmented_remote_ack():
     async def scenario():
         resources = asyncio.Queue()

@@ -23,9 +23,13 @@ class ReverseServerOptions:
     """Limits shared by registration and business SOCKS connections.
 
     ``idle_timeout=None`` retains registered resources until they are claimed
-    or disconnected. Resource limits include reserved registrations, idle and
-    claimed streams until closed. The total connection limit also counts the
-    accepted business sockets and handshakes.
+    or disconnected. Each user's resource quota is the larger of registrations
+    (reserved, idle and claimed until closed) and admitted business requests
+    (queued, connecting and relaying). The global quota sums these user slots.
+    The total connection limit also counts the
+    accepted business sockets, queued requests and handshakes. An empty pool
+    queues up to ``max_pending_connections`` requests for ``queue_timeout``;
+    zero pending capacity disables waiting.
     """
 
     handshake_timeout: float = 10.0
@@ -40,11 +44,14 @@ class ReverseServerOptions:
     splice_byte_budget: int = 256 * 1024
     splice_call_budget: int = 8
     registration_timeout: float = 10.0
+    queue_timeout: float = 10.0
+    max_pending_connections: int = 1024
 
     def __post_init__(self) -> None:
         for name in (
             "handshake_timeout",
             "registration_timeout",
+            "queue_timeout",
             "request_timeout",
             "reply_timeout",
         ):
@@ -63,6 +70,12 @@ class ReverseServerOptions:
             _positive_integer("max_resources_per_user", self.max_resources_per_user)
         if not isinstance(self.ipv6_only, bool):
             raise TypeError("ipv6_only must be a bool")
+        if isinstance(self.max_pending_connections, bool) or not isinstance(
+            self.max_pending_connections, int
+        ):
+            raise TypeError("max_pending_connections must be an integer")
+        if self.max_pending_connections < 0:
+            raise ValueError("max_pending_connections must be nonnegative")
 
 
 @dataclass(frozen=True, slots=True)

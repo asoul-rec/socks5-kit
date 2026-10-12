@@ -183,7 +183,8 @@ Agent 的 WAIT_CONNECT 数量现在表示已获 Server 确认的资源，能够�
 ## 4. 一次业务请求
 
 1. 公网代理使用 SOCKS5 出站向 Server 提交真实目标；Server 完成方法/账户协商，取得 user 并读取 CONNECT。
-2. Server 从该 user 的池原子领取一条空闲资源，移出池并移交 socket 所有权。
+2. Server 从该 user 的池原子领取一条空闲资源；空池时进入同 user 的等待队列。
+   新资源优先分配给该 user 最早的等待请求，移出池并移交 socket 所有权。
    领取过程中不跨 await；空闲监测任务必须停止后，业务任务才能接管读写。
 3. Server 向该资源发送反向 CONNECT，等待 Agent 的完整回复。
 4. Agent 精确读取 CONNECT，立即把资源计为占用并触发后台补池；同时调用本机
@@ -216,17 +217,53 @@ Agent 只需一个小的补池调度器，具体业务任务彼此独立。定�
 只有“待用 + 正在建立”不足目标值，且总额度未满时，才创建补充连接。
 收到反向 CONNECT、注册失败、空闲 EOF、业务完成都会触发检查。
 补建失败需要有上限退避并独立重试，不能只等下一条业务请求，否则池耗尽后无法自恢复。
+正常启动或消费资源时，调度器按额度并发补足缺口。进入退避后，每次到期只新建一条
+注册连接；该连接完成 SOCKS/ACK 或失败前不再启动其他尝试。之前批次尚在建立的连接
+会继续完成，调度器等待它们的结果。收到任一有效注册 ACK 后才退出退避，恢复并发补池。
+已有连接上的业务 CONNECT 会唤醒调度器，但不会让注册重试绕过退避。
 
 `idle_connections=1` 不意味着只能并发一个业务；不断补充可以产生多条活动连接。
 `max_connections=1` 才会使这个实例串行：资源占用期间不再补建，结束后才补。
 限制 Agent 提供资源确实无需增加线协议；多个 Agent 的额度分别生效，不能自动当作
-某 user 的总额度。Server 设置全实例资源上限，并可设置统一的每 user 上限；已占用
-资源也计入归属 user 的额度。额度与空闲队列分开维护，活动资源清理后才释放计数。
-空闲队列和活动计数都归零时清理该 user 条目，不维护永久的用户注册记录。
+某 user 的总额度。Server 用 slot 统一约束预注册连接和业务请求：
 
-Server 首版对应 user 空池时直接回复一般失败 `REP=0x01`，不建立无限等待队列。
-若只有一个待用资源，同时涌入多个请求，后续请求可能早于补池完成而失败。
-没有“每次消耗后立刻始终有新资源”的保证；空闲池大小决定可立即承接的突发数量。
+```text
+R[user] = 正在注册 + 空闲 + 已领取/正在转发的注册连接
+B[user] = 已接纳、正在排队 + 正在连接目标 + 正在转发的业务请求
+slots[user] = max(R[user], B[user])
+全局 slots = sum(slots[user])
+```
+
+`max_resources_per_user` 限制 `slots[user]`，`max_resources` 限制全局之和。
+业务 CONNECT 在进入队列或领取资源之前就同步占用 B 名额，超额直接回复一般失败，
+不再进入等待。新注册同步检查 R 名额，同样受限。两侧不重复扣配额：
+同一 user 的 32 条注册和 32 条业务占 32 个 slot；没有注册时，32 条排队业务也占 32 个。
+若 A 有 32 条注册而 B 有 32 条业务，因资源不能跨 user 共用，全局占 64 个 slot。
+
+当业务先到且已经占满配额时，同 user 的注册仍可加入，直到 R 达到 B，期间不额外增加 slot。
+预注册先到时，业务也可加入到同一额度。超过较大值的注册或业务仍立即拒绝。
+配额覆盖整个生命周期：业务在超时、失败、取消或转发结束时释放 B；注册在关闭时释放 R。
+两侧计数都归零时清理该 user 条目，不维护永久的用户注册记录。
+
+对应 user 空池时，Server 把业务 CONNECT 放入该 user 的 FIFO 等待队列。
+只保留连接、目标和等待状态，业务 payload 留在 socket 接收缓冲区，不在 Python 中额外缓存。
+同 user 的新注册完成 ACK 后，资源随机领取并预留给最早的等待请求，再唤醒业务任务。
+等待超时以一般失败 `REP=0x01` 拒绝；队列已满则立即拒绝。
+`queue_timeout=10` 秒从读完业务 CONNECT、进入队列时起算；获资源后才开始独立的
+`request_timeout`，不把排队时间算作 Agent 建立目标连接的时间。
+
+排队连接计入 `max_connections`；所有 user 合计最多排队 `max_pending_connections=1024`。
+同时必须满足上述全局/per-user slot 配额；队列容量较大不会扩大资源名额。
+有效队列上限还取两者约束的最小值 `min(max_pending_connections, max_connections - 1)`，
+为全是等待请求时的新注册留一个接入位置。其他握手、注册和活动业务同样占用最大连接额度，
+接入已满时仍按原有规则关闭新连接。设置 `max_pending_connections=0` 可关闭排队，恢复空池立即失败。
+`max_connections` 统计实际接入 socket，slot 统计可配对的逻辑名额；一条已配对业务有
+业务 socket 和注册 socket 两个接入连接，因此仍需为两侧设置足够的总连接额度。
+
+处理任务取消或超时会移出队列；领取与取消发生竞态时也会关闭已预留但未接管的资源。
+Server 关闭时立即结束等待请求，宽限期只用于已经领取资源的业务。
+排队期间的写半关闭保持为合法 EOF，后续照常透传。
+调用方或相邻代理的 SOCKS 握手超时须覆盖排队和目标协商，否则可能先于 Server 结束等待。
 
 ## 6. 空闲存活、关闭与资源所有权
 
@@ -335,11 +372,13 @@ Server 支持多个 user，但无需跨实例的 identity 注册表或 Agent 清
 | --- | --- | --- |
 | `handshake_timeout` | 10 秒 | methods、凭据、业务或注册 CONNECT 的总期限 |
 | `registration_timeout` | 10 秒 | SOCKS 回复成功后等待完整 HELLO 的期限 |
+| `queue_timeout` | 10 秒 | 空池业务请求在队列中等待资源的期限 |
+| `max_pending_connections` | 1024 | 所有 user 的等待请求总上限，0 关闭排队 |
 | `request_timeout` | 10 秒 | 写反向 CONNECT 并读取 Agent REP 的总期限 |
 | `reply_timeout` | 5 秒 | 写完整成功或失败回复 |
 | `max_connections` | 2048 | 所有接入 socket，包含握手、注册资源和业务入口 |
-| `max_resources` | 1024 | 已预留、空闲、已领取和正在转发的注册资源总量 |
-| `max_resources_per_user` | `None` | 每组注册资源上限，`None` 不额外限制 |
+| `max_resources` | 1024 | 全局各 user 的 `max(注册数, 已接纳业务数)` 之和上限 |
+| `max_resources_per_user` | `None` | 每 user 的 slot 上限，`None` 不额外限制 |
 | `idle_timeout` | `None` | 从进入空闲池开始计时，`None` 不因空闲超时而淘汰 |
 | `backlog` | 128 | 监听队列 |
 | `ipv6_only` | `True` | IPv6 监听默认单栈 |
@@ -348,7 +387,9 @@ Server 支持多个 user，但无需跨实例的 identity 注册表或 Agent 清
 
 `ReverseAgentOptions` 默认 `idle_connections=1`、`max_connections=64`；
 补建失败退避从 `reconnect_initial_delay=0.1` 秒指数增长到 `reconnect_max_delay=5` 秒。
-有效 ACK 重置注册退避，收到 CONNECT 后立即触发补建。`registration_timeout=10` 秒限制
+这是失败后的重试等待时间，建连、SOCKS 和 ACK 的耗时另计；单纯连接数不足不会触发退避。
+有效 ACK 重置注册退避；正常状态收到 CONNECT 后立即补池，退避期间只唤醒调度检查。
+`registration_timeout=10` 秒限制
 本机 SOCKS 成功后等待完整 ACK 的时间。`request_timeout=10` 秒从收到反向 CONNECT 的
 首字节开始计算，只限制剩余请求帧，不限制等待业务的空闲时间；`reply_timeout=5` 秒。
 访问本机代理的建连和握手期限由传入的 `Socks5Client` 配置，各默认 10 秒。
@@ -356,7 +397,11 @@ splice 两项预算与 Server 相同。数量须为正整数，超时须为有�
 Agent 的目标空闲数不能超过总额，最大退避不能小于初始退避。
 
 Server 可读 `active_connections`（所有接入 socket）、`resource_count`（所有注册资源）、
-`idle_connections`（所有组空闲资源）和 `idle_count(user)`（指定原始 username 的空闲数）。
+`idle_connections`（所有组空闲资源）、`idle_count(user)`（指定原始 username 的空闲数），
+以及 `pending_connections`（所有组等待资源的业务请求数，已包含在 `active_connections` 中）。
+`business_connections` 包含等待、连接目标和转发中的业务；`slots_in_use` 是全局占用配额，
+`slot_count(user)` 是指定 user 的占用配额。`resource_count` 仍只统计实际注册连接，
+不会把等待业务伪装成已建立的注册连接。
 `idle_count()` 只查询默认 `None` 组，不是所有组的合计。
 Agent 可读 `connection_count`（所有反向资源）、`idle_connections`（已获公网 ACK、等待 CONNECT 的资源）、
 `active_connections`（已收到完整 CONNECT、正在建业务连接或透传的资源）。
@@ -368,7 +413,7 @@ Agent 可读 `connection_count`（所有反向资源）、`idle_connections`（�
 
 1. HELLO 随 CONNECT 先发，只有完整 ACK 才确认就绪；假 SOCKS 成功、错误版本、
    错误帧、分片、合包、超时和关闭均不会误报待用连接。
-2. 热池命中、空池失败、多请求原子领取、不同业务不串线；资源永不重复入池。
+2. 热池命中、空池排队、队列超时/满额、多请求原子领取、不同业务不串线；资源永不重复入池。
    多 user 隔离、不跨池回退；`None`、`b""`、大小写不同及非 UTF-8 username 各自分组；
    password 不影响分组，方法优先级沿用既有规则。
 3. DOMAIN/IPv4/IPv6、成功与失败 REP、完整 BND、分片/合包、目标主动 banner。

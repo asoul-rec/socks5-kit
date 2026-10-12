@@ -25,6 +25,7 @@ _TIMES = [
         "request_timeout",
         "reply_timeout",
         "registration_timeout",
+        "queue_timeout",
         "idle_timeout",
     )
 ] + [
@@ -63,6 +64,20 @@ def test_registration_frames_and_timeout_defaults():
     assert REGISTRATION_ACK == b"S5KR\x01\x02"
     assert ReverseServerOptions().registration_timeout == 10
     assert ReverseAgentOptions().registration_timeout == 10
+    assert ReverseServerOptions().queue_timeout == 10
+    assert ReverseServerOptions().max_pending_connections == 1024
+
+
+@pytest.mark.parametrize("value", [True, 1.5, "1", None])
+def test_pending_limit_rejects_wrong_types(value):
+    with pytest.raises(TypeError, match="max_pending_connections"):
+        ReverseServerOptions(max_pending_connections=value)
+
+
+def test_pending_limit_allows_zero_to_disable_queue_but_rejects_negative():
+    assert ReverseServerOptions(max_pending_connections=0).max_pending_connections == 0
+    with pytest.raises(ValueError, match="max_pending_connections"):
+        ReverseServerOptions(max_pending_connections=-1)
 
 
 def test_server_registration_timeout_preserves_existing_positional_options():
