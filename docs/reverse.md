@@ -14,7 +14,9 @@ Agent 提前经本地代理连接 `reverse.example.com:443`；公网代理按自
 Agent 收到 ACK 后才认为公网已接受该资源，随后等待反向 CONNECT。
 
 有业务请求时，Server 从相同 user 的池中独占领取一条 socket，在其已有字节流中发送目标 CONNECT；
-Agent 经本地代理连接该目标，返回 SOCKS5 格式的 REP。成功之后两侧直接 splice。
+取得资源并分配 pipe 后，Server 提前向业务端回复成功，让业务数据紧跟反向 CONNECT。
+Agent 经本地代理连接该目标，在等待本机 SOCKS 回复期间就转发上行内容；
+返回 SOCKS5 格式的 REP 后，两侧开启下行 splice。连接失败则关闭流。
 Agent 收到请求时异步补充新的空闲连接；每条资源只承载一次业务，结束后销毁。
 
 无需独立控制连接、REGISTER/OPEN/ATTACH 消息、ticket 或跨连接请求配对表。
@@ -40,7 +42,7 @@ Agent
 ```
 
 这里有两段独立的 SOCKS 协商：Agent 与 P_C，以及 P_S 与 Server。
-最初的 greeting/CONNECT 已被 P_C 消费，P_S 根据目 标元信息重新生成它们。
+最初的 greeting/CONNECT 已被 P_C 消费，P_S 根据目标元信息重新生成它们。
 Server 使用的是 **P_S → Server 这一跳**的 username；不推断 Agent 的源 IP，
 也不假设 Agent → P_C 的 SOCKS 账户或加密协议的用户会自动变成这个 username。
 这些身份如何映射，由 P_S 显式配置；注册流和相应业务流必须映射到相同的 user。
@@ -83,7 +85,7 @@ username/password 字段格式来自 [RFC 1929](https://www.rfc-editor.org/rfc/r
 - `0x00`：`user=None`，进入默认池。
 - `0x02`：使用收到的 username；空 username 是 `b""`，与 `None` 区分。
 - password 不参与分组；相同 username、不同 password 仍属于同一池。
-- 空池或不存在的 user 回复失败，绝不退回默认池或其他 user 的池。
+- 空池或不存在的 user 按该组排队规则等待，超时或无法入队时回复失败；绝不借用其他 user 的池。
 
 这里的 user 是分组元信息，不是 addon 认证。来源身份与访问权限由公网代理处理。
 账户字段不会再随反向 CONNECT 发给 Agent，也不会冒充内网业务 SOCKS 的凭据。
@@ -162,6 +164,9 @@ Agent 的回复使用完整 SOCKS5 reply 格式：
 这里的 `REP=0` 表示成功，其他值表示失败；线上不是只有一个 REP 字节。
 成功回复中的 BND 可保留本机 SOCKS 代理提供的地址，不能当成业务 target。
 失败时也生成完整回复，随后关闭当前资源。
+反向 CONNECT 与 REP 的格式、注册 HELLO/ACK 及版本均保持原样，只提前发送上行业务数据。
+Server 提前给业务端的成功回复使用 `BND=0.0.0.0:0`，此时尚不知道 Agent 的 BND；
+Agent 的 REP 由 Server 消费，不作为业务数据转发，也不再向业务端追加第二份回复。
 
 CONNECT 与 REP 的格式复用 [RFC 1928](https://www.rfc-editor.org/rfc/rfc1928)。
 “HELLO/ACK 后角色翻转、等待 CONNECT、不再做 methods 协商”是 addon 双方固定的约定；
@@ -179,6 +184,7 @@ Agent 的 WAIT_CONNECT 数量现在表示已获 Server 确认的资源，能够�
 公网 addon，并且该 addon 预留了资源、校验了协议，回程也可用。
 这是一轮注册时的确认，不能保证连接未来始终健康，也不增加账户认证。
 业务 REP 仍只能表达本地目标代理报告的结果，不能增强代理对真实目标的成功保证。
+Server 提前给业务端的 REP 则表示已取得反向资源、可以提交数据，不保证目标已经建连。
 
 ## 4. 一次业务请求
 
@@ -186,19 +192,32 @@ Agent 的 WAIT_CONNECT 数量现在表示已获 Server 确认的资源，能够�
 2. Server 从该 user 的池原子领取一条空闲资源；空池时进入同 user 的等待队列。
    新资源优先分配给该 user 最早的等待请求，移出池并移交 socket 所有权。
    领取过程中不跨 await；空闲监测任务必须停止后，业务任务才能接管读写。
-3. Server 向该资源发送反向 CONNECT，等待 Agent 的完整回复。
+3. Server 先分配双向 pipe，向业务端提前回复 `REP=0, BND=0.0.0.0:0`，
+   然后完整发送反向 CONNECT。没有业务内容也照常发送 CONNECT。
+   上行 splice 随即启动，业务数据紧跟 CONNECT，不等待 Agent 的 REP。
 4. Agent 精确读取 CONNECT，立即把资源计为占用并触发后台补池；同时调用本机
-   `Socks5Client.connect(target)`。目标可为 DOMAIN、IPv4 或 IPv6，不在 addon 本地解析。
-5. 本机 SOCKS 返回成功后，Agent 先准备双向 pipe，再写完整成功 REP，随后 splice。
+   SOCKS 代理。目标可为 DOMAIN、IPv4 或 IPv6，不在 addon 本地解析。
+   本机方法协商完成后分配双向 pipe，完整写完本机 CONNECT，随即开启上行 splice，
+   让业务数据在本机 REP 到达之前就进入代理。
+5. 本机 SOCKS 返回成功后，Agent 写完整成功 REP，然后开启下行 splice。
    拒绝则回传对应 REP；超时或本机异常映射为失败，关闭当前资源。
-6. Server 收到 Agent 成功回复后，准备自己的 pipe，再向公网代理回复成功，开始 splice。
-   收到失败就回复失败并关闭；绝不能仅因领到空闲资源就提前回复业务成功。
+6. Server 精确消费 Agent 的成功回复后开启下行 splice。
+   收到失败、截断、超时或转发错误就关闭业务连接及当前资源，不追加失败回复。
 7. 双向传输结束后关闭资源。失败、取消、EOF 后都不重新放回空闲池。
 
 本机 SOCKS 回复与 ACK、ACK 与反向 CONNECT、业务 REP 与目标主动发送的 banner，
 都可能紧邻或合包。
 所有握手使用 raw socket 的精确读取，后续数据留在内核接收队列，避免预读导致 splice 丢数据。
-向业务方发出成功之前完成 pipe 分配；握手完成后 socket 的读写只能由 relay 统一管理。
+向业务方发出成功之前完成 Server 的 pipe 分配。等待 REP 时只有上行 splice 工作，
+下行 socket 仍由精确读取协商回复的任务独占；完整控制帧写出后才把该方向交给 splice。
+切换阶段保留原 pipe 及其中待发送的数据，不另建 relay、不预读或缓存业务 payload。
+socket/pipe 的背压自然限制内存，单次调度仍受现有 splice 预算约束。
+上行半关闭先排空 pipe 再转发 EOF，仍可等待成功 REP 和下行业务响应。
+若转发在协商期间失败，取消并等待对应的回复读任务结束，再关闭 socket，避免遗留 FD 监听。
+
+配额检查、入队时的名额预占、随机领取、资源释放和补池退避完全沿用既有规则。
+空池排队及准入失败仍未报告成功，可以正常回复 SOCKS 错误；只有取得资源后采用提前成功。
+提前成功后的请求可能已经到达目标，失败以 EOF/连接重置表示，不承诺零字节交付。
 
 如果 Server 已经发出反向 CONNECT，错误时首版直接结束该请求，不自动换另一条资源
 重发：目标可能已经被连接，不能把结果未知当成请求从未发生。
@@ -263,7 +282,8 @@ slots[user] = max(R[user], B[user])
 处理任务取消或超时会移出队列；领取与取消发生竞态时也会关闭已预留但未接管的资源。
 Server 关闭时立即结束等待请求，宽限期只用于已经领取资源的业务。
 排队期间的写半关闭保持为合法 EOF，后续照常透传。
-调用方或相邻代理的 SOCKS 握手超时须覆盖排队和目标协商，否则可能先于 Server 结束等待。
+调用方或相邻代理的 SOCKS 握手超时须覆盖排队，否则可能先于 Server 结束等待。
+取得资源后的目标协商仍受既有期限限制，只是业务端已经收到成功，随后失败表现为断流。
 
 ## 6. 空闲存活、关闭与资源所有权
 
@@ -293,21 +313,23 @@ HELLO/ACK 给注册增加一次往返，后台补池时完成，不为每条业�
 当 Server 已有健康空闲资源时，注册、加密隧道建立、SOCKS 及 HELLO/ACK 已经完成，
 不在当前业务的关键路径上。也不需要先发 OPEN，再等 Agent 建立返回连接。
 
-但仍有 **一次反向 CONNECT/REP 往返，以及 Agent 调用本地代理连接目标的时间**。
-从 Server 读完业务 CONNECT，到能够返回成功，大致为：
+热池命中后，Server 立即报告成功，把业务请求紧跟 CONNECT 送往 Agent；
+Agent 向本机代理同样流水发送 CONNECT 和业务数据。反向 REP 不再阻挡上行请求。
+从 Server 取得资源到首次业务响应的大致路径为：
 
 ```text
 T ≈ RTT(Server ↔ Agent 现有隧道)
-    + Agent 本地 SOCKS 协商及代理报告连接成功的时间
+    + Agent 本机代理协商及目标建连/处理响应的时间
     + 本机调度/转发开销
 ```
 
-若代理等待真实目标连接完成才报告成功，上式包含目标解析、目标 TCP 建连等耗时。
-若代理提前报告成功，这部分可能体现为之后的首字节等待，而不会凭空消失。
-首个应用字节还取决于请求发送、目标响应及协议本身。
+这消除了“先等反向 REP 回到 Server，再把业务请求送往 Agent”的额外隧道往返。
+请求/响应型业务正常只需一轮隧道往返；没有业务内容的 CONNECT 也会立即发出，
+目标主动发送的 banner 在 REP 后照常传回。注册 HELLO/ACK 和反向报文均没有增加或改版。
 
-因此可承诺设计上 **热池命中无需临时建隧道的额外等待**，但不能承诺零额外延迟，
-或与任意目标的直连 TCP 三次握手首字节时间相同。空池、补建、旧连接失效也会影响结果。
+这里的“一轮”描述隧道传输路径，实际首字节仍包含本机 SOCKS 方法协商、DNS、
+目标 TCP 建连、代理内部处理及应用自身的等待。addon 不直接连接目标，也不能要求
+中间代理在收到首包后立即发往尚未建立的目标；排队、坏资源及网络拥塞同样可能增加时间。
 
 稳态仍为两侧各一组双向 Linux splice，不给业务数据增加帧头。代理内部的加密、
 封装、内存复制以及是否使用 mux/连接池仍由代理决定；不能将 addon 局部 splice
@@ -416,12 +438,13 @@ Agent 可读 `connection_count`（所有反向资源）、`idle_connections`（�
 2. 热池命中、空池排队、队列超时/满额、多请求原子领取、不同业务不串线；资源永不重复入池。
    多 user 隔离、不跨池回退；`None`、`b""`、大小写不同及非 UTF-8 username 各自分组；
    password 不影响分组，方法优先级沿用既有规则。
-3. DOMAIN/IPv4/IPv6、成功与失败 REP、完整 BND、分片/合包、目标主动 banner。
+3. DOMAIN/IPv4/IPv6、提前成功的占位 BND、Agent 成功/失败 REP、完整 BND、分片/合包、目标主动 banner。
 4. 收到请求立即补池、补建失败退避、空池自恢复、总额度覆盖所有状态、关闭期间停止补建。
 5. 空闲 EOF、领取瞬间断连、黑洞超时、不重发已经提交的 CONNECT、取消和 FD/pipe 回收。
 6. 同 user 的多个资源、随机领取、掉线资源剔除、其余资源继续接收新请求；
    全实例/每 user 额度与空组回收。
-7. 2 MiB 数据、双向半关闭、目标先发 banner，以及池满、失败、取消时的 socket/pipe 回收。
+7. 多 MiB 业务内容及 EOF 在协商回复之前到达、双向半关闭、目标先发 banner，
+   以及池满、失败、取消时的 socket/pipe 回收；控制帧不混入业务数据。
 
 固定版本 Xray/V2Fly 的真实双侧代理拓扑、测试结果及复现方式见 [验证记录](validation.md)。
 代理联调与模块测试分开记录；代理不支持的行为不会被模块的回环测试代替。

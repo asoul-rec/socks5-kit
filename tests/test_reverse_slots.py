@@ -10,6 +10,7 @@ from socks5_kit.protocol import encode_reply
 from socks5_kit.reverse import ReverseServer, ReverseServerOptions
 from tests.test_reverse_queue import business, register
 from tests.test_reverse_tcp import (
+    OPTIMISTIC_BOUND,
     REGISTRATION,
     close_writer,
     connect_request,
@@ -111,12 +112,13 @@ def test_both_arrival_orders_pair_within_full_quota_without_double_counting(
                 assert server.slots_in_use == 2
                 await rejected(server, target, user=b"same")
                 await rejected(server, REGISTRATION, user=b"same")
-                # In-progress target negotiation still holds business slots.
+                # Success precedes target negotiation; claimed slots stay held.
+                for reader in requests:
+                    assert await downstream_reply(reader) == (0, OPTIMISTIC_BOUND)
+                await rejected(server, target, user=b"same")
                 for _reader, writer in agents:
                     writer.write(encode_reply(0))
                     await writer.drain()
-                for reader in requests:
-                    assert (await downstream_reply(reader))[0] == 0
                 assert server.slots_in_use == server.business_connections == 2
                 await rejected(server, target, user=b"same")
                 await server.aclose()

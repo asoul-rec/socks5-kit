@@ -13,6 +13,7 @@ from socks5_kit.reverse import ReverseAgent, ReverseServer, ReverseServerOptions
 from socks5_kit.reverse._common import REGISTRATION_ACK, REGISTRATION_HELLO
 from tests.test_auth_tcp import auth_frame
 from tests.test_reverse_tcp import (
+    OPTIMISTIC_BOUND,
     REGISTRATION,
     LocalProxy,
     close_writer,
@@ -84,11 +85,11 @@ def test_waits_for_registration_and_preserves_payload_and_early_half_close(targe
                     target.host, target.port
                 )
                 assert server.pending_connections == server.idle_connections == 0
+                assert await downstream_reply(reader) == (0, OPTIMISTIC_BOUND)
+                assert await agent_reader.read() == payload
                 agent_writer.write(encode_reply(0, bound) + b"server first")
                 await agent_writer.drain()
-                assert await downstream_reply(reader) == (0, bound)
                 assert await reader.readexactly(12) == b"server first"
-                assert await agent_reader.read() == payload
                 agent_writer.write(b"response after queued EOF")
                 agent_writer.write_eof()
                 assert await reader.read() == b"response after queued EOF"
@@ -206,7 +207,7 @@ def test_requests_are_fifo_while_resources_remain_single_use():
                     assert server.pending_connections == 2 - index
                     agent_writer.write(encode_reply(5))
                     await agent_writer.drain()
-                    assert (await downstream_reply(reader))[0] == 5
+                    assert await downstream_reply(reader) == (0, OPTIMISTIC_BOUND)
                     assert await reader.read() == b""
                     await eventually(lambda: server.resource_count == 0)
                 assert server.pending_connections == 0
@@ -243,7 +244,8 @@ def test_waiting_request_cannot_consume_another_users_registration(user):
                 )
                 agent_writer.write(encode_reply(5))
                 await agent_writer.drain()
-                assert (await downstream_reply(reader))[0] == 5
+                assert await downstream_reply(reader) == (0, OPTIMISTIC_BOUND)
+                assert await reader.read() == b""
                 assert server.pending_connections == 0
                 assert server.idle_count(b"other") == 1
             finally:
@@ -353,7 +355,8 @@ def test_cancelled_waiter_is_removed_before_another_request_gets_resource():
                 )
                 agent_writer.write(encode_reply(5))
                 await agent_writer.drain()
-                assert (await downstream_reply(reader))[0] == 5
+                assert await downstream_reply(reader) == (0, OPTIMISTIC_BOUND)
+                assert await reader.read() == b""
                 assert server.pending_connections == 0
             finally:
                 for writer in writers:

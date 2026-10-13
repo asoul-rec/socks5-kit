@@ -4,6 +4,7 @@ import asyncio
 import os
 import socket
 import sys
+from collections.abc import Awaitable
 
 from ..errors import PlatformError
 
@@ -36,6 +37,7 @@ class SpliceRelay:
         self._directions: list[_Direction] = []
         self._closed = False
         self._started = False
+        self._reverse_started = False
         try:
             self._directions.append(_Direction(self, left, right))
             self._directions.append(_Direction(self, right, left))
@@ -43,16 +45,54 @@ class SpliceRelay:
             self.close()
             raise
 
-    async def run(self) -> None:
+    def start(self, *, forward_only: bool = False) -> None:
+        """Start forwarding, optionally reserving the reverse reader for a reply."""
         if self._started or self._closed:
             raise RuntimeError("relay can only be run once")
         self._started = True
-        for direction in self._directions:
-            direction.wake()
+        self._directions[0].wake()
+        if not forward_only:
+            self.start_reverse()
+
+    def start_reverse(self) -> None:
+        """Hand the reverse socket reader to splice after its control reply."""
+        if self._closed and self._finished.done():
+            # Preserve a forwarding failure that raced with the reply reader.
+            self._finished.result()
+        if not self._started or self._closed or self._reverse_started:
+            raise RuntimeError("reverse relay can only be started once")
+        self._reverse_started = True
+        self._directions[1].wake()
+
+    async def read_handshake[T](self, reply: Awaitable[T]) -> T:
+        """Read a control reply while forwarding; cancel its reader on any failure."""
+        reader = asyncio.ensure_future(reply)
+        try:
+            await asyncio.wait(
+                (reader, self._finished), return_when=asyncio.FIRST_COMPLETED
+            )
+            if self._finished.done():
+                self._finished.result()
+            return reader.result()
+        except BaseException:
+            self.close()
+            raise
+        finally:
+            if not reader.done():
+                reader.cancel()
+            # Remove the raw reader before a caller closes/reuses its socket FD.
+            await asyncio.gather(reader, return_exceptions=True)
+
+    async def wait(self) -> None:
+        """Wait for both directions, retaining an unfinished reverse pipe after EOF."""
         try:
             await self._finished
         finally:
             self.close()
+
+    async def run(self) -> None:
+        self.start()
+        await self.wait()
 
     def complete_direction(self) -> None:
         if all(direction.done for direction in self._directions):
@@ -72,6 +112,9 @@ class SpliceRelay:
             direction.close()
         if not self._finished.done():
             self._finished.cancel()
+        elif not self._finished.cancelled():
+            # Failure may precede the waiter (for example during control I/O).
+            self._finished.exception()
 
 
 class _Direction:

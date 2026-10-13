@@ -202,10 +202,9 @@ class ReverseAgent:
             # parallel with the potentially slow destination connection. Only
             # a registration ACK restores normal refill after a failure.
             self._wake.set()
-            destination = await self._egress_proxy.connect(target)
-            relay = SpliceRelay(
+            destination, relay = await self._egress_proxy._connect_pipelined(
+                target,
                 carrier.socket,
-                destination.socket,
                 byte_budget=self._options.splice_byte_budget,
                 call_budget=self._options.splice_call_budget,
             )
@@ -215,7 +214,8 @@ class ReverseAgent:
                     carrier.socket,
                     encode_reply(ReplyCode.SUCCESS, destination.bound_address),
                 )
-            await relay.run()
+            relay.start_reverse()
+            await relay.wait()
         except asyncio.CancelledError:
             raise
         except Exception as exc:

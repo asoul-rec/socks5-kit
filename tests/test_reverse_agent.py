@@ -1,6 +1,7 @@
 """Agent refill, total budgets, retries, and stream ownership on real TCP."""
 
 import asyncio
+import os
 from ipaddress import IPv4Address, IPv6Address
 from itertools import pairwise
 
@@ -45,18 +46,22 @@ def test_refill_during_target_connect_obeys_total_budget(maximum):
         resources = asyncio.Queue()
         target_started = asyncio.Event()
         target_continue = asyncio.Event()
+        payload_received = asyncio.Event()
         target = Target(IPv6Address("2001:db8::123"), 4567)
         bound = BoundAddress(IPv6Address("2001:db8::456"), 1234)
-        payload = b"pipelined payload before target connect succeeds"
+        payload = bytes(range(256)) * 16384
+        banner = b"local proxy REP coalesced with target banner\x00\xff"
 
         async def egress(reader, writer):
             requested = await upstream_request(reader, writer)
             assert Target(requested.host, requested.port) == target
             target_started.set()
+            assert await reader.readexactly(len(payload)) == payload
+            payload_received.set()
             await target_continue.wait()
-            writer.write(encode_reply(0, bound))
+            writer.write(encode_reply(0, bound) + banner)
             await writer.drain()
-            assert await reader.read() == payload
+            assert await reader.read() == b""
             writer.write(b"response after peer EOF")
             await writer.drain()
 
@@ -76,6 +81,8 @@ def test_refill_during_target_connect_obeys_total_budget(maximum):
             writer.write(encode_connect(target) + payload)
             await writer.drain()
             await target_started.wait()
+            async with asyncio.timeout(3):
+                await payload_received.wait()
             assert agent.active_connections == 1
             if maximum == 2:
                 await eventually(lambda: agent.idle_connections == 1)
@@ -88,10 +95,14 @@ def test_refill_during_target_connect_obeys_total_budget(maximum):
                 assert resources.empty()
                 assert agent.connection_count == 1
                 assert agent.idle_connections == 0
+            with pytest.raises(TimeoutError):
+                async with asyncio.timeout(0.02):
+                    await reader.read(1)
+            # Uplink EOF must survive while the local proxy REP is pending.
+            writer.write_eof()
             target_continue.set()
             assert await downstream_reply(reader) == (0, bound)
-            writer.write_eof()
-            assert await reader.read() == b"response after peer EOF"
+            assert await reader.read() == banner + b"response after peer EOF"
             await eventually(
                 lambda: (
                     agent.connection_count == 1
@@ -762,5 +773,106 @@ def test_constructor_validation_and_context_does_not_start():
                 await agent.serve_forever()
         with pytest.raises(RuntimeError, match="only be started once"):
             await agent.start()
+
+    run(scenario)
+
+
+@pytest.mark.parametrize("failure", ["reject", "eof", "invalid", "timeout"])
+def test_pipelined_egress_failure_preserves_reply_and_closes_without_payload(failure):
+    async def scenario():
+        baseline = len(os.listdir("/proc/self/fd"))
+        resources = asyncio.Queue()
+        payload = b"payload before the local proxy makes its decision" * 4096
+        payload_received = asyncio.Event()
+
+        async def egress(reader, writer):
+            await upstream_request(reader, writer)
+            assert await reader.readexactly(len(payload)) == payload
+            payload_received.set()
+            if failure == "reject":
+                # Failed SOCKS replies need not include optional bound fields.
+                writer.write(b"\x05\x05\x00")
+            elif failure == "invalid":
+                writer.write(b"\x04\x00\x00")
+            elif failure == "eof":
+                return
+            await writer.drain()
+            assert await reader.read() == b""
+
+        async with (
+            Service(registration_handler(resources)) as registration,
+            Service(egress) as destination,
+            ReverseAgent(
+                REGISTRATION,
+                Socks5Client("127.0.0.1", registration.port),
+                egress_proxy=Socks5Client(
+                    "127.0.0.1", destination.port, handshake_timeout=0.2
+                ),
+                options=ReverseAgentOptions(max_connections=1),
+            ) as agent,
+        ):
+            await agent.start()
+            reader, writer = await resources.get()
+            writer.write(
+                encode_connect(Target("pending-local-reply.test", 80)) + payload
+            )
+            await writer.drain()
+            await payload_received.wait()
+            reply, _bound = await downstream_reply(reader)
+            assert reply == (5 if failure == "reject" else 1)
+            assert await reader.read() == b""
+            await resources.get()
+            await eventually(lambda: agent.idle_connections == 1)
+            assert agent.active_connections == 0
+            assert agent.connection_count == 1
+            assert destination.connections == 1
+            assert registration.connections == 2
+        assert len(os.listdir("/proc/self/fd")) == baseline
+
+    run(scenario)
+
+
+def test_shutdown_during_egress_reply_cancels_uplink_and_reclaims_descriptors():
+    async def scenario():
+        baseline = len(os.listdir("/proc/self/fd"))
+        resources = asyncio.Queue()
+        payload_received = asyncio.Event()
+        egress_closed = asyncio.Event()
+        payload = b"bytes transferred while the local REP is pending"
+
+        async def egress(reader, writer):
+            await upstream_request(reader, writer)
+            assert await reader.readexactly(len(payload)) == payload
+            payload_received.set()
+            assert await reader.read() == b""
+            egress_closed.set()
+
+        async with (
+            Service(registration_handler(resources)) as registration,
+            Service(egress) as destination,
+            ReverseAgent(
+                REGISTRATION,
+                Socks5Client("127.0.0.1", registration.port),
+                egress_proxy=Socks5Client(
+                    "127.0.0.1", destination.port, handshake_timeout=60
+                ),
+                options=ReverseAgentOptions(max_connections=1),
+            ) as agent,
+        ):
+            await agent.start()
+            reader, writer = await resources.get()
+            writer.write(
+                encode_connect(Target("cancel-local-reply.test", 80)) + payload
+            )
+            await writer.drain()
+            await payload_received.wait()
+            assert agent.connection_count == agent.active_connections == 1
+            async with asyncio.timeout(0.3):
+                await agent.aclose()
+            assert await reader.read() == b""
+            await egress_closed.wait()
+            assert agent.connection_count == agent.active_connections == 0
+            assert agent.idle_connections == 0
+        assert len(os.listdir("/proc/self/fd")) == baseline
 
     run(scenario)

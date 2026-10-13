@@ -12,6 +12,7 @@
 - **reverse addon**：Agent 经现有代理预建反向 TCP 连接，Server 按 SOCKS5 username 分组、
   随机领取空闲资源，空池请求可有界排队并设置超时。HELLO/ACK 确认公网注册，
   预注册和业务请求共享 user slot 配额，每条连接使用一次，并在后台补池。
+  取得资源后提前回复成功，流水发送 CONNECT 和业务数据，连接失败时关闭流。
 
 SOCKS5 目前仅支持 TCP CONNECT，不支持 BIND 和 UDP ASSOCIATE。
 目标改写中继和 reverse addon 均经代理访问目标，不直接连接业务目标。

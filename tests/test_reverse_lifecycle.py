@@ -21,6 +21,7 @@ from tests.test_reverse_tcp import (
     immediate_server,
     resource,
     reverse_request,
+    success_then_closed,
 )
 from tests.test_tcp import run
 
@@ -145,11 +146,11 @@ def test_idle_removal_updates_index_of_resource_swapped_from_pool_end(monkeypatc
                 # Retire index zero; the last resource must inherit that index.
                 await close_writer(first_writer)
                 await eventually(lambda: server.resource_count == 2)
-                business = asyncio.create_task(failed_request(server))
+                business = asyncio.create_task(success_then_closed(server))
                 await reverse_request(third_reader)
                 third_writer.write(encode_reply(5))
                 await third_writer.drain()
-                assert await business == 5
+                await business
                 await eventually(lambda: server.resource_count == 1)
 
                 # Claiming the swapped resource swaps the second resource too.

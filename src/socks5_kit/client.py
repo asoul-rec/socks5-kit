@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Self
 
 from ._io import read_exact, read_reply
+from ._linux.splice import SpliceRelay
 from .errors import ProtocolError
 from .models import BoundAddress, Target
 from .protocol import NO_AUTH, VERSION, encode_connect
@@ -104,24 +105,64 @@ class Socks5Client:
         before the proxy reports success. It is not replayed or acknowledged by
         this client. The returned socket retains all bytes after the reply.
         """
+        tunnel, _relay = await self._connect(target, initial_data=initial_data)
+        return tunnel
+
+    async def _connect_pipelined(
+        self,
+        target: Target,
+        source: socket.socket,
+        *,
+        byte_budget: int = 256 * 1024,
+        call_budget: int = 8,
+    ) -> tuple[TcpTunnel, SpliceRelay]:
+        """Reverse addon: stream payload before REP, leaving reverse splice paused."""
+        tunnel, relay = await self._connect(
+            target, source=source, byte_budget=byte_budget, call_budget=call_budget
+        )
+        assert relay is not None
+        return tunnel, relay
+
+    async def _connect(
+        self,
+        target: Target,
+        *,
+        initial_data: bytes = b"",
+        source: socket.socket | None = None,
+        byte_budget: int = 256 * 1024,
+        call_budget: int = 8,
+    ) -> tuple[TcpTunnel, SpliceRelay | None]:
         if not isinstance(target, Target):
             raise TypeError("target must be a Target")
         if not isinstance(initial_data, bytes):
             raise TypeError("initial_data must be bytes")
         loop = asyncio.get_running_loop()
         sock = await self._open_socket()
+        relay: SpliceRelay | None = None
         try:
             async with asyncio.timeout(self.handshake_timeout):
                 await loop.sock_sendall(sock, bytes([VERSION, 1, NO_AUTH]))
                 version, method = await read_exact(sock, 2)
                 if version != VERSION or method != NO_AUTH:
                     raise ProtocolError("upstream does not accept SOCKS5 no-auth")
+                if source is not None:
+                    relay = SpliceRelay(
+                        source, sock, byte_budget=byte_budget, call_budget=call_budget
+                    )
                 await loop.sock_sendall(sock, encode_connect(target) + initial_data)
-                bound = await read_reply(sock)
-            return TcpTunnel(sock, bound, loop)
+                if relay is None:
+                    bound = await read_reply(sock)
+                else:
+                    relay.start(forward_only=True)
+                    bound = await relay.read_handshake(read_reply(sock))
+            return TcpTunnel(sock, bound, loop), relay
         except ProtocolError as exc:
+            if relay is not None:
+                relay.close()
             sock.close()
             raise ProtocolError(f"invalid upstream handshake: {exc}") from exc
         except BaseException:
+            if relay is not None:
+                relay.close()
             sock.close()
             raise

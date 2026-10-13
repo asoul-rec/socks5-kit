@@ -33,6 +33,7 @@ from tests.test_tcp import (
 pytestmark = pytest.mark.tcp_loopback
 REGISTRATION = Target(DEFAULT_REVERSE_DOMAIN, 443)
 DESTINATION = Target("destination.example", 80)
+OPTIMISTIC_BOUND = BoundAddress(IPv4Address("0.0.0.0"), 0)
 
 
 def immediate_server(*args, options=None, **kwargs):
@@ -92,7 +93,7 @@ async def resource(server, *, user=None, password=b"", target=REGISTRATION):
     )
     try:
         assert reply == 0
-        assert bound == BoundAddress(IPv4Address("0.0.0.0"), 0)
+        assert bound == OPTIMISTIC_BOUND
         assert await reader.readexactly(len(REGISTRATION_ACK)) == REGISTRATION_ACK
         await eventually(lambda: server.idle_count(user) == before + 1)
         yield reader, writer
@@ -112,6 +113,16 @@ async def failed_request(server, target=DESTINATION, **kwargs):
         assert reply != 0
         assert await reader.read() == b""
         return reply
+    finally:
+        await close_writer(writer)
+
+
+async def success_then_closed(server, target=DESTINATION, **kwargs):
+    """Claimed resources have one optimistic reply, followed by EOF on failure."""
+    reader, writer, reply, bound = await connect_request(server, target, **kwargs)
+    try:
+        assert (reply, bound) == (0, OPTIMISTIC_BOUND)
+        assert await reader.read() == b""
     finally:
         await close_writer(writer)
 
@@ -259,7 +270,7 @@ def test_hello_with_trailing_bytes_acknowledges_exact_frame_then_retires_resourc
         Target(IPv6Address("2001:db8::10"), 8443),
     ],
 )
-def test_registered_resource_preserves_target_bound_and_coalesced_payload(target):
+def test_registered_resource_preserves_target_and_coalesced_payload(target):
     async def scenario():
         prefix = b"server-first greeting\x00\xff"
         payload = bytes(range(256)) * 8192
@@ -279,7 +290,7 @@ def test_registered_resource_preserves_target_bound_and_coalesced_payload(target
                 await agent_writer.drain()
                 reader, writer, reply, received_bound = await business
                 try:
-                    assert reply == 0 and received_bound == bound
+                    assert (reply, received_bound) == (0, OPTIMISTIC_BOUND)
                     assert await reader.readexactly(len(prefix)) == prefix
                     assert await agent_reader.readexactly(len(payload)) == payload
                     writer.write_eof()
@@ -351,13 +362,13 @@ def test_resource_selection_is_random_and_consumes_each_resource_once(monkeypatc
                     (second_reader, second_writer),
                     (first_reader, first_writer),
                 ]:
-                    request = asyncio.create_task(failed_request(server))
+                    request = asyncio.create_task(success_then_closed(server))
                     assert await reverse_request(reader) == BoundAddress(
                         "destination.example", 80
                     )
                     writer.write(encode_reply(5))
                     await writer.drain()
-                    assert await request == 5
+                    await request
                     await closed(reader)
                 assert await failed_request(server) == 1
             assert choices == [2, 1]
@@ -373,7 +384,7 @@ def test_claimed_resource_failure_never_retries_other_idle_resources(failure):
         async with immediate_server(options=options) as server:
             await server.start(port=0)
             async with resource(server) as (agent_reader, agent_writer):
-                business = asyncio.create_task(failed_request(server))
+                business = asyncio.create_task(success_then_closed(server))
                 await reverse_request(agent_reader)
                 # Add another valid resource only after the first has been claimed.
                 async with resource(server) as (spare_reader, _spare_writer):
@@ -384,7 +395,7 @@ def test_claimed_resource_failure_never_retries_other_idle_resources(failure):
                     elif failure == "invalid":
                         agent_writer.write(b"\x04\x00\x00")
                     await agent_writer.drain()
-                    assert await business == (5 if failure == "rejection" else 1)
+                    await business
                     assert server.idle_count() == 1
                     # The unused resource must receive neither CONNECT nor a close.
                     with pytest.raises(TimeoutError):
@@ -441,7 +452,7 @@ def test_user_resource_quota_includes_claimed_resources_and_is_per_user():
         async with immediate_server(options=options) as server:
             await server.start(port=0)
             async with resource(server, user=b"one") as (agent_reader, agent_writer):
-                business = asyncio.create_task(failed_request(server, user=b"one"))
+                business = asyncio.create_task(success_then_closed(server, user=b"one"))
                 await reverse_request(agent_reader)
                 assert await failed_request(server, REGISTRATION, user=b"one") == 1
                 async with resource(server, user=b"two"):
@@ -450,7 +461,7 @@ def test_user_resource_quota_includes_claimed_resources_and_is_per_user():
                         await failed_request(server, REGISTRATION, user=b"three") == 1
                     )
                 agent_writer.write(encode_reply(5))
-                assert await business == 5
+                await business
             await eventually(lambda: server.resource_count == 0)
             async with resource(server, user=b"one"):
                 assert server.idle_count(b"one") == 1
@@ -585,7 +596,7 @@ def test_agent_and_server_use_proxy_for_registration_and_target_with_half_close(
                     reader, writer, reply, bound = await connect_request(server, target)
                     try:
                         assert reply == 0
-                        assert bound == BoundAddress(IPv6Address("::1"), 4321)
+                        assert bound == OPTIMISTIC_BOUND
                         assert await reader.readexactly(len(prefix)) == prefix
                         await eventually(lambda: server.idle_count() == 1)
                         assert agent.active_connections == 1
@@ -664,7 +675,7 @@ def test_agent_recovers_from_registration_and_target_rejections_without_new_traf
                     await agent.start()
                     await eventually(lambda: server.idle_count() == 1)
                     assert routing.registrations == 3
-                    assert await failed_request(server) == 5
+                    await success_then_closed(server)
                     await eventually(lambda: server.idle_count() == 1)
                     assert routing.registrations == 4
                     assert len(routing.targets) == 1

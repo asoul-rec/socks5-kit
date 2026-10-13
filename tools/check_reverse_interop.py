@@ -20,7 +20,9 @@ from datetime import UTC, datetime
 from ipaddress import IPv4Address, IPv6Address
 from pathlib import Path
 
-from socks5_kit import Socks5Client, Target
+from socks5_kit import BoundAddress, Socks5Client, Target, TcpTunnel
+from socks5_kit._io import read_exact, read_reply
+from socks5_kit.protocol import encode_connect
 from socks5_kit.reverse import (
     DEFAULT_REVERSE_DOMAIN,
     ReverseAgent,
@@ -351,6 +353,12 @@ class RecordingClient(Socks5Client):
         self.initial_payloads.append(initial_data)
         return await super().connect(target, initial_data=initial_data)
 
+    async def _connect_pipelined(self, target, source, *, byte_budget, call_budget):
+        self.targets.append(target)
+        return await super()._connect_pipelined(
+            target, source, byte_budget=byte_budget, call_budget=call_budget
+        )
+
 
 @asynccontextmanager
 async def target_server():
@@ -457,6 +465,50 @@ async def check_case(endpoint, target, *, half_close=False, wait_for_greeting=Fa
             async with asyncio.TaskGroup() as group:
                 group.create_task(send())
                 group.create_task(receive())
+            return address_record(tunnel.bound_address)
+
+
+async def connect_reverse_authenticated(endpoint, target):
+    """Inspect ReverseServer's own REP, before another SOCKS proxy replaces BND."""
+    loop = asyncio.get_running_loop()
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.setblocking(False)
+    try:
+        await loop.sock_connect(sock, endpoint)
+        await loop.sock_sendall(sock, b"\x05\x01\x02")
+        assert await read_exact(sock, 2) == b"\x05\x02"
+        await loop.sock_sendall(
+            sock, b"\x01" + bytes([len(USERNAME)]) + USERNAME + b"\x05dummy"
+        )
+        assert await read_exact(sock, 2) == b"\x01\x00"
+        await loop.sock_sendall(sock, encode_connect(target))
+        bound = await read_reply(sock)
+        assert bound == BoundAddress(IPv4Address("0.0.0.0"), 0), bound
+        return TcpTunnel(sock, bound, loop)
+    except BaseException:
+        sock.close()
+        raise
+
+
+async def check_direct_reverse_reply(endpoint, target, *, failure=False):
+    async with asyncio.timeout(10):
+        async with await connect_reverse_authenticated(endpoint, target) as tunnel:
+            if failure:
+                assert await tunnel.recv() == b"", (
+                    "post-success failure sent a second REP"
+                )
+            else:
+                assert await receive_exact(tunnel, len(GREETING)) == GREETING
+
+                async def send():
+                    await tunnel.sendall(b"\x00" + len(PAYLOAD).to_bytes(4) + PAYLOAD)
+
+                async def receive():
+                    assert await receive_exact(tunnel, len(RESPONSE)) == RESPONSE
+
+                async with asyncio.TaskGroup() as group:
+                    group.create_task(send())
+                    group.create_task(receive())
             return address_record(tunnel.bound_address)
 
 
@@ -595,6 +647,40 @@ async def main(
                                 registration_attempts=registered,
                             )
                             record(prewarm)
+                            for case, target, failure in (
+                                ("direct_optimistic_reply", targets[-1], False),
+                                (
+                                    "direct_post_success_failure_no_second_reply",
+                                    Target(
+                                        IPv4Address("127.0.0.1"), unused_ports(1)[0]
+                                    ),
+                                    True,
+                                ),
+                            ):
+                                result = {
+                                    "proxy": name,
+                                    "case": case,
+                                    "required": True,
+                                    "target": address_record(target),
+                                    "reply_endpoint": (
+                                        "ReverseServer authenticated business listener"
+                                    ),
+                                }
+                                before = len(egress.targets)
+                                try:
+                                    await wait_pool(server, agent)
+                                    result["bound"] = await check_direct_reverse_reply(
+                                        server.address, target, failure=failure
+                                    )
+                                    assert egress.targets[before:] == [target]
+                                    result["refill_seconds"] = round(
+                                        await wait_pool(server, agent), 4
+                                    )
+                                except Exception as exc:
+                                    result.update(status="FAIL", error=repr(exc))
+                                else:
+                                    result["status"] = "PASS"
+                                record(result)
                             for target in targets:
                                 result = {
                                     "proxy": name,

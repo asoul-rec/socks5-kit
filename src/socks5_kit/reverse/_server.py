@@ -436,9 +436,6 @@ class ReverseServer:
                 self._admit_business(user)
                 business_admitted = True
                 resource = await self._wait_for_resource(user)
-                async with asyncio.timeout(self._options.request_timeout):
-                    await loop.sock_sendall(resource.socket, encode_connect(target))
-                    bound = await read_reply(resource.socket)
                 relay = SpliceRelay(
                     connection,
                     resource.socket,
@@ -447,10 +444,16 @@ class ReverseServer:
                 )
                 reply_started = True
                 async with asyncio.timeout(self._options.reply_timeout):
-                    await loop.sock_sendall(
-                        connection, encode_reply(ReplyCode.SUCCESS, bound)
-                    )
-                await relay.run()
+                    await loop.sock_sendall(connection, encode_reply(ReplyCode.SUCCESS))
+                async with asyncio.timeout(self._options.request_timeout):
+                    await loop.sock_sendall(resource.socket, encode_connect(target))
+                    # The CONNECT frame owns the writer until completely sent.
+                    # Uplink then runs immediately; the reply remains the sole
+                    # reader of the reverse socket until its full BND is consumed.
+                    relay.start(forward_only=True)
+                    await relay.read_handshake(read_reply(resource.socket))
+                relay.start_reverse()
+                await relay.wait()
         except asyncio.CancelledError:
             raise
         except Exception as exc:

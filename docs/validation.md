@@ -297,3 +297,51 @@ Server 默认按同一 user 的 FIFO 队列等待资源，`queue_timeout=10` 秒
 超时/取消/队列满后的释放，以及交付竞态中的两侧配额与 FD 回收。
 全量 **748 passed，无跳过**，使用 asyncio debug、Python dev 模式和 `-W error`；
 Ruff 与格式检查通过。
+
+## reverse 业务协商流水转发（2026-10-13）
+
+这次仅改变业务发送时序：Server 取得资源并准备 pipe 后立即向业务端报告成功，
+再发送反向 CONNECT 并开启上行 splice；Agent 完整写出本机 CONNECT 后也立即
+开启上行 splice，不再等本机 REP。两侧都先精确消费协商回复，再开启下行 splice。
+注册 HELLO/ACK、反向 CONNECT/REP 的格式及版本、随机领取、资源/配额、
+排队和补池规则完全沿用既有实现。
+
+业务端的提前成功使用 `BND=0.0.0.0:0`，表示已取得资源、可以发送内容。
+Agent 仍返回本机代理的协商结果；Server 消费该 REP，失败时关闭流，不追加第二份回复。
+空池排队、配额或队列已满等领取前失败仍正常回复错误。
+提前报告成功不保证目标已经建连，也不保证发生异常之前没有数据到达目标。
+
+新增 32 项检查，原有检查同步更新取得资源后的失败语义。
+实际 Linux TCP/socket/pipe 的事件门控检查覆盖：Server 在 Agent REP 前发送 8 MiB，
+Agent 在本机 REP 前发送 4 MiB；发送全部数据和 EOF 后才允许模拟对端回复，
+证明实现不存在等待 REP 才转发的依赖。另验证真实背压、分片 BND、REP 与 banner 合包、
+没有业务内容仍发送 CONNECT、协商期间的半关闭、错误/超时/取消时撤销回复读任务，
+以及 pipe 分配失败、单次资源、spare 不重试、队列/配额与 FD 回收。
+这些检查验证发送时序，不作为定量 RTT benchmark。
+
+全量 **780 passed，无跳过**，使用 asyncio debug、Python dev 模式和 `-W error`；
+Ruff、格式检查及离线 uv 源码包/wheel 构建通过。
+
+### 真实代理复测
+
+保持固定版本 Xray 26.9.9、V2Fly 5.53.0，使用代理默认策略：
+
+| 载体 | Xray | V2Fly |
+| --- | --- | --- |
+| VMess AES-128-GCM / TCP | 6/6 通过 | 6/6 通过 |
+| 内置 SS chacha20-ietf-poly1305 / TCP | 6/6 通过 | 6/6 通过 |
+| VLESS/TLS | 6/6 通过 | 6/6 通过 |
+
+每组包含注册及空闲保持、IPv4/IPv6/DOMAIN 业务、直接连接 addon 检查占位 BND，
+以及目标连接失败时 EOF 且没有第二份 REP，共 **36 项必要检查全部通过**。
+仍保留目标先发 greeting、双向各 1 MiB 的内容校验、user 分组与补池检查。
+中间代理可能重写其面向业务端的 BND，所以占位地址单独在 Server addon 入口检查。
+
+VLESS/TLS 的 4 项可选 EOF 触发响应探针仍未通过：直接本机代理和 reverse 两条路径
+均收到提前 EOF，记录为中间代理限制，不计入正常传输通过数。
+与旧记录的 TimeoutError 表现有差别，本次使用默认代理策略；并不说明半关闭支持已修复。
+
+[逐项结果](reverse-optimistic-interop-results.json) 包含三次运行及历史 JSON 的 SHA-256。
+旧失败和注册协商复测证据均保留。配置、日志和原始结果写在各次指定的输出目录。
+复现方式沿用上文工具，使用 `--default-policy`，分别选择
+`--carrier vmess`、`--carrier shadowsocks` 或 `--carrier vless-tls`。
