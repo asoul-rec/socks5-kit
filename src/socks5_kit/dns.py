@@ -3,11 +3,13 @@
 import asyncio
 import inspect
 import ipaddress
+import itertools
 import logging
 import math
 import secrets
 import socket
 import struct
+import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from enum import IntEnum
@@ -22,10 +24,12 @@ from ._dns_protocol import (
     encode_upstream_query,
     parse_query,
 )
+from ._logging import failure_level, log_event
 
 __all__ = ["DnsOptions", "DnsRecordType", "DnsResolver", "DnsServer"]
 
 logger = logging.getLogger(__name__)
+_server_ids = itertools.count(1)
 
 
 class DnsRecordType(IntEnum):
@@ -96,7 +100,7 @@ class _Datagrams(asyncio.DatagramProtocol):
         self.owner._datagram_received(data, addr)
 
     def error_received(self, exc: Exception) -> None:
-        logger.debug("DNS datagram error: %s", exc)
+        logger.warning("DNS datagram error error_type=%s", type(exc).__name__)
 
     def connection_lost(self, exc: Exception | None) -> None:
         if not self.closed.done():
@@ -158,6 +162,8 @@ class DnsServer:
         self._lock = asyncio.Lock()
         self._stopped = asyncio.Event()
         self._close_task: asyncio.Task | None = None
+        self._server_id = next(_server_ids)
+        self._query_sequence = itertools.count(1)
 
     @property
     def upstream_dns(self) -> tuple[str, int] | None:
@@ -242,6 +248,17 @@ class DnsServer:
                 await server.start_serving()
                 self._address = endpoint[0], endpoint[1]
                 self._state = "running"
+                log_event(
+                    logger,
+                    logging.INFO,
+                    "dns_server_started",
+                    server_id=self._server_id,
+                    listener=self._address,
+                    transports="udp,tcp",
+                    upstream=self._upstream_dns,
+                    max_pending_queries=self._options.max_pending_queries,
+                    max_tcp_connections=self._options.max_tcp_connections,
+                )
             except BaseException:
                 self._state = "new"
                 self._address = None
@@ -257,6 +274,58 @@ class DnsServer:
                 raise
 
     async def _answer(
+        self,
+        packet: bytes,
+        *,
+        _reserved: bool = False,
+        _udp: bool = False,
+        _transport: str = "internal",
+        _peer: tuple | None = None,
+    ) -> bytes | None:
+        query_id = next(self._query_sequence)
+        started = time.monotonic()
+        reply = await self._answer_packet(packet, _reserved=_reserved, _udp=_udp)
+        if reply is not None:
+            rcode = reply[3] & 0xF
+            level = (
+                logging.WARNING
+                if rcode in (Rcode.FORMERR, Rcode.SERVFAIL)
+                else logging.INFO
+            )
+            # Parse extra access metadata only if this response will be logged.
+            if logger.isEnabledFor(level):
+                try:
+                    query = parse_query(packet)
+                except DnsFormatError:
+                    query = None
+                if query is not None and query.edns_version != 0:
+                    rcode = Rcode.BADVERS
+                log_event(
+                    logger,
+                    level,
+                    "dns_response",
+                    server_id=self._server_id,
+                    query_id=query_id,
+                    listener=self._address,
+                    transport=_transport,
+                    peer=_peer,
+                    domain=query.domain if query is not None else None,
+                    qtype=query.qtype if query is not None else None,
+                    rcode=int(rcode),
+                    answer_count=int.from_bytes(reply[6:8]),
+                    elapsed_ms=round((time.monotonic() - started) * 1000, 3),
+                )
+        elif reply is None:
+            logger.debug(
+                "DNS packet ignored server_id=%s query_id=%s transport=%s peer=%r",
+                self._server_id,
+                query_id,
+                _transport,
+                _peer,
+            )
+        return reply
+
+    async def _answer_packet(
         self, packet: bytes, *, _reserved: bool = False, _udp: bool = False
     ) -> bytes | None:
         try:
@@ -277,6 +346,16 @@ class DnsServer:
             return encode_response(query)
         if not _reserved:
             if self._pending_queries >= self._options.max_pending_queries:
+                logger.warning(
+                    "DNS query rejected server_id=%s domain=%r qtype=%s "
+                    "reason=max_pending_queries active_queries=%s "
+                    "max_pending_queries=%s",
+                    self._server_id,
+                    query.domain,
+                    query.qtype,
+                    self._pending_queries,
+                    self._options.max_pending_queries,
+                )
                 return encode_response(query, rcode=Rcode.SERVFAIL)
             self._pending_queries += 1
         try:
@@ -321,7 +400,14 @@ class DnsServer:
                 udp=_udp,
             )
         except Exception as exc:
-            logger.debug("DNS callback for %s failed: %s", query.domain, exc)
+            logger.log(
+                failure_level(exc),
+                "DNS callback failed server_id=%s domain=%r qtype=%s error_type=%s",
+                self._server_id,
+                query.domain,
+                query.qtype,
+                type(exc).__name__,
+            )
             return encode_response(query, rcode=Rcode.SERVFAIL)
         finally:
             if not _reserved:
@@ -350,11 +436,29 @@ class DnsServer:
                         reply = await loop.sock_recv(connection, 65535)
                         if len(reply) >= 2 and int.from_bytes(reply[:2]) != identifier:
                             continue
-                        return decode_upstream_address(
+                        address = decode_upstream_address(
                             reply, identifier=identifier, labels=labels, qtype=qtype
                         )
+                        logger.debug(
+                            "DNS upstream completed server_id=%s upstream=%r "
+                            "alias=%r qtype=%s address_found=%s",
+                            self._server_id,
+                            self._upstream_dns,
+                            b".".join(labels),
+                            int(qtype),
+                            address is not None,
+                        )
+                        return address
         except (OSError, TimeoutError, DnsFormatError) as exc:
-            logger.debug("DNS upstream lookup failed: %s", exc)
+            logger.warning(
+                "DNS upstream failed server_id=%s upstream=%r alias=%r qtype=%s "
+                "error_type=%s",
+                self._server_id,
+                self._upstream_dns,
+                b".".join(labels),
+                int(qtype),
+                type(exc).__name__,
+            )
             return None
 
     def _datagram_received(self, packet: bytes, endpoint: tuple) -> None:
@@ -362,6 +466,17 @@ class DnsServer:
             self._state != "running"
             or self._pending_queries >= self._options.max_pending_queries
         ):
+            logger.log(
+                logging.WARNING if self._state == "running" else logging.DEBUG,
+                "DNS datagram dropped server_id=%s listener=%r peer=%r state=%s "
+                "active_queries=%s max_pending_queries=%s",
+                self._server_id,
+                self._address,
+                endpoint,
+                self._state,
+                self._pending_queries,
+                self._options.max_pending_queries,
+            )
             return
         self._pending_queries += 1
         task = self._check_loop().create_task(self._reply_datagram(packet, endpoint))
@@ -369,7 +484,9 @@ class DnsServer:
         task.add_done_callback(self._datagram_done)
 
     async def _reply_datagram(self, packet: bytes, endpoint: tuple) -> None:
-        reply = await self._answer(packet, _reserved=True, _udp=True)
+        reply = await self._answer(
+            packet, _reserved=True, _udp=True, _transport="udp", _peer=endpoint
+        )
         if reply is not None and self._state == "running":
             assert self._udp_transport is not None
             self._udp_transport.sendto(reply, endpoint)
@@ -387,6 +504,17 @@ class DnsServer:
             self._state != "running"
             or len(self._connections) >= self._options.max_tcp_connections
         ):
+            logger.log(
+                logging.WARNING if self._state == "running" else logging.DEBUG,
+                "DNS TCP rejected server_id=%s listener=%r peer=%r state=%s "
+                "active_connections=%s max_tcp_connections=%s",
+                self._server_id,
+                self._address,
+                writer.get_extra_info("peername"),
+                self._state,
+                self.active_connections,
+                self._options.max_tcp_connections,
+            )
             writer.transport.abort()
             return
         task = self._check_loop().create_task(self._serve_connection(reader, writer))
@@ -396,6 +524,14 @@ class DnsServer:
     async def _serve_connection(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:
+        peer = writer.get_extra_info("peername")
+        logger.debug(
+            "DNS TCP accepted server_id=%s listener=%r peer=%r active_connections=%s",
+            self._server_id,
+            self._address,
+            peer,
+            self.active_connections,
+        )
         try:
             while self._state == "running":
                 async with asyncio.timeout(self._options.tcp_idle_timeout):
@@ -403,13 +539,18 @@ class DnsServer:
                     if size == 0:
                         return
                     packet = await reader.readexactly(size)
-                reply = await self._answer(packet)
+                reply = await self._answer(packet, _transport="tcp", _peer=peer)
                 if reply is not None and self._state == "running":
                     writer.write(struct.pack("!H", len(reply)) + reply)
                     async with asyncio.timeout(self._options.tcp_idle_timeout):
                         await writer.drain()
-        except OSError, asyncio.IncompleteReadError, TimeoutError:
-            pass
+        except (OSError, asyncio.IncompleteReadError, TimeoutError) as exc:
+            logger.debug(
+                "DNS TCP ended server_id=%s peer=%r error_type=%s",
+                self._server_id,
+                peer,
+                type(exc).__name__,
+            )
         finally:
             writer.close()
             try:
@@ -452,6 +593,7 @@ class DnsServer:
             raise
 
     async def _close(self, initiator: asyncio.Task | None) -> None:
+        listener = self._address
         try:
             self._address = None
             if self._tcp_server is not None:
@@ -475,6 +617,14 @@ class DnsServer:
         finally:
             self._state = "closed"
             self._stopped.set()
+            logger.info(
+                "DNS server stopped server_id=%s listener=%r active_queries=%s "
+                "active_connections=%s",
+                self._server_id,
+                listener,
+                self.active_queries,
+                self.active_connections,
+            )
 
     async def __aenter__(self) -> Self:
         self._check_loop()

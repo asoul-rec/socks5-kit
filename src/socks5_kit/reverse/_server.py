@@ -2,6 +2,7 @@
 
 import asyncio
 import functools
+import itertools
 import logging
 import random
 import socket
@@ -11,6 +12,7 @@ from typing import Self
 
 from .._io import negotiate_server, read_exact, read_reply, read_request
 from .._linux.splice import SpliceRelay, ensure_supported
+from .._logging import failure_level, log_event
 from ..errors import ProtocolError
 from ..models import Target
 from ..protocol import Command, ReplyCode, encode_connect, encode_reply
@@ -26,6 +28,8 @@ from ._options import ReverseServerOptions
 
 logger = logging.getLogger(__name__)
 type User = bytes | None
+_connection_ids = itertools.count(1)
+_resource_ids = itertools.count(1)
 
 
 @dataclass(eq=False, slots=True)
@@ -33,6 +37,7 @@ class _Resource:
     socket: socket.socket
     user: User
     done: asyncio.Future[None]
+    resource_id: int = 0
     registration_task: asyncio.Task | None = None
     state: str = "registering"
     index: int | None = None
@@ -144,6 +149,9 @@ class ReverseServer:
             raise RuntimeError("server must be used on its original event loop")
         return loop
 
+    def _log_event(self, level: int, event: str, **fields: object) -> None:
+        log_event(logger, level, event, server_id=id(self), **fields)
+
     async def start(self, host: str = "127.0.0.1", port: int = 1080) -> None:
         loop = self._check_loop()
         if (
@@ -187,18 +195,34 @@ class ReverseServer:
             self._state = "running"
             self._accept_task = loop.create_task(self._accept_loop())
             self._accept_task.add_done_callback(self._accept_done)
+            self._log_event(
+                logging.INFO,
+                "reverse_server_started",
+                listen=self.address,
+                registration_domain=self.registration_domain,
+                queue_timeout=self._options.queue_timeout,
+                max_pending_connections=self._options.max_pending_connections,
+            )
 
     async def _accept_loop(self) -> None:
         assert self._loop is not None and self._listener is not None
         while True:
-            connection, _peer = await self._loop.sock_accept(self._listener)
+            connection, peer = await self._loop.sock_accept(self._listener)
             if len(self._sessions) >= self._options.max_connections:
+                self._log_event(
+                    logging.WARNING,
+                    "reverse_connection_rejected",
+                    peer=peer,
+                    reason="max_connections",
+                    connections=self.active_connections,
+                    max_connections=self._options.max_connections,
+                )
                 connection.close()
                 continue
             try:
                 connection.setblocking(False)
                 connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-                task = self._loop.create_task(self._serve_connection(connection))
+                task = self._loop.create_task(self._serve_connection(connection, peer))
             except BaseException:
                 connection.close()
                 raise
@@ -208,6 +232,12 @@ class ReverseServer:
     def _accept_done(self, task: asyncio.Task) -> None:
         if not task.cancelled():
             self._accept_error = task.exception()
+        if self._accept_error is not None:
+            self._log_event(
+                logging.ERROR,
+                "reverse_accept_failed",
+                error_type=type(self._accept_error).__name__,
+            )
         self._stopped.set()
         if self._accept_error is not None and self._state == "running":
             self._state = "closing"
@@ -227,6 +257,24 @@ class ReverseServer:
         if (limit is not None and slots > limit) or (
             self._slots_in_use + added > self._options.max_resources
         ):
+            if limit is not None and slots > limit:
+                fields = {
+                    "reason": "max_resources_per_user",
+                    "user_slots": self.slot_count(user),
+                    "max_resources_per_user": limit,
+                }
+            else:
+                fields = {
+                    "reason": "max_resources",
+                    "slots": self.slots_in_use,
+                    "max_resources": self._options.max_resources,
+                }
+            self._log_event(
+                logging.WARNING,
+                "reverse_slot_rejected",
+                user=user,
+                **fields,
+            )
             raise ProtocolError("reverse resource slot limit reached")
         return added
 
@@ -254,10 +302,21 @@ class ReverseServer:
         added = self._check_slot_limit(
             user, count + 1, self._business_counts.get(user, 0)
         )
-        resource = _Resource(connection, user, self._check_loop().create_future())
+        resource = _Resource(
+            connection,
+            user,
+            self._check_loop().create_future(),
+            resource_id=next(_resource_ids),
+        )
         self._resources.add(resource)
         self._resource_counts[user] = count + 1
         self._slots_in_use += added
+        self._log_event(
+            logging.DEBUG,
+            "reverse_resource_reserved",
+            user=user,
+            resource_id=resource.resource_id,
+        )
         return resource
 
     def _publish(self, resource: _Resource) -> None:
@@ -272,6 +331,12 @@ class ReverseServer:
             resource.timer = loop.call_later(
                 self._options.idle_timeout, self._retire, resource
             )
+        self._log_event(
+            logging.DEBUG,
+            "reverse_resource_published",
+            user=resource.user,
+            resource_id=resource.resource_id,
+        )
         self._dispatch_pending(resource.user)
 
     def _remove_pending(self, pending: _Pending) -> None:
@@ -300,7 +365,13 @@ class ReverseServer:
             pending.resource = resource
             pending.ready.set_result(resource)
 
-    async def _wait_for_resource(self, user: User) -> _Resource:
+    async def _wait_for_resource(
+        self,
+        user: User,
+        *,
+        connection_id: int | None = None,
+        target: Target | None = None,
+    ) -> _Resource:
         if resource := self._take(user):
             return resource
         # Waiting requests retain accepted sockets. Leave an admission slot
@@ -309,10 +380,29 @@ class ReverseServer:
             self._options.max_pending_connections, self._options.max_connections - 1
         )
         if self._pending_count >= limit:
+            self._log_event(
+                logging.WARNING,
+                "reverse_queue_rejected",
+                user=user,
+                connection_id=connection_id,
+                target=target,
+                reason="queue_full",
+                pending=self.pending_connections,
+                queue_limit=limit,
+            )
             raise ProtocolError("reverse request queue is full")
         pending = _Pending(user, self._check_loop().create_future())
         self._pending.setdefault(user, OrderedDict())[pending] = None
         self._pending_count += 1
+        self._log_event(
+            logging.INFO,
+            "reverse_business_queued",
+            user=user,
+            connection_id=connection_id,
+            target=target,
+            user_pending=len(self._pending[user]),
+            queue_timeout=self._options.queue_timeout,
+        )
         try:
             async with asyncio.timeout(self._options.queue_timeout):
                 return await pending.ready
@@ -347,12 +437,20 @@ class ReverseServer:
         if resource.state != "idle":
             return
         try:
-            resource.socket.recv(1, socket.MSG_PEEK)
+            data = resource.socket.recv(1, socket.MSG_PEEK)
+            reason = "unsolicited_data" if data else "idle_eof"
         except BlockingIOError:
             return
         except OSError:
-            pass
+            reason = "idle_socket_error"
         # EOF, reset or unsolicited bytes: no Agent data is valid before CONNECT.
+        self._log_event(
+            logging.INFO if reason == "idle_eof" else logging.WARNING,
+            "reverse_idle_disconnected",
+            user=resource.user,
+            resource_id=resource.resource_id,
+            reason=reason,
+        )
         self._retire(resource)
 
     def _take(self, user: User) -> _Resource | None:
@@ -361,18 +459,27 @@ class ReverseServer:
             self._remove_idle(resource)
             # A ready EOF callback may not have run yet. No bytes are consumed.
             try:
-                resource.socket.recv(1, socket.MSG_PEEK)
+                data = resource.socket.recv(1, socket.MSG_PEEK)
+                reason = "unsolicited_data" if data else "idle_eof"
             except BlockingIOError:
                 resource.state = "claimed"
                 return resource
             except OSError:
-                pass
+                reason = "idle_socket_error"
+            self._log_event(
+                logging.INFO if reason == "idle_eof" else logging.WARNING,
+                "reverse_idle_disconnected",
+                user=resource.user,
+                resource_id=resource.resource_id,
+                reason=reason,
+            )
             self._retire(resource)
         return None
 
     def _retire(self, resource: _Resource) -> None:
         if resource.state == "closed":
             return
+        previous_state = resource.state
         self._remove_idle(resource)
         resource.state = "closed"
         resource.socket.close()
@@ -386,13 +493,35 @@ class ReverseServer:
         self._slots_in_use += self.slot_count(resource.user) - before
         if not resource.done.done():
             resource.done.set_result(None)
+        self._log_event(
+            logging.DEBUG,
+            "reverse_resource_closed",
+            user=resource.user,
+            resource_id=resource.resource_id,
+            reason=previous_state,
+        )
 
-    async def _serve_connection(self, connection: socket.socket) -> None:
+    async def _serve_connection(
+        self, connection: socket.socket, peer: tuple | None = None
+    ) -> None:
         negotiated = reply_started = False
         business_admitted = False
         resource: _Resource | None = None
         relay: SpliceRelay | None = None
+        loop = self._check_loop()
+        connection_id = next(_connection_ids)
+        started = loop.time()
+        user = None
+        target = None
+        stage = "socks_handshake"
+        outcome = "closed"
         try:
+            self._log_event(
+                logging.DEBUG,
+                "reverse_socket_accepted",
+                connection_id=connection_id,
+                peer=peer,
+            )
             async with asyncio.timeout(self._options.handshake_timeout):
                 credentials = await negotiate_server(connection)
                 if credentials is None:
@@ -408,34 +537,68 @@ class ReverseServer:
                 target = Target(address.host, address.port)
             if self._state != "running":
                 return
-            loop = self._check_loop()
             if (
                 isinstance(target.host, str)
                 and canonical_domain(target.host) == self.registration_domain
             ):
+                stage = "registration_reserve"
                 resource = self._reserve(connection, user)
                 resource.registration_task = asyncio.current_task()
                 reply_started = True
                 async with asyncio.timeout(self._options.reply_timeout):
                     await loop.sock_sendall(connection, encode_reply(ReplyCode.SUCCESS))
                 async with asyncio.timeout(self._options.registration_timeout):
+                    stage = "registration_hello"
                     hello = await read_exact(connection, len(REGISTRATION_HELLO))
                     if hello != REGISTRATION_HELLO:
                         raise ProtocolError("invalid reverse registration hello")
                 if self._state != "running":
                     return
                 async with asyncio.timeout(self._options.reply_timeout):
+                    stage = "registration_ack"
                     await loop.sock_sendall(connection, REGISTRATION_ACK)
                 if self._state != "running":
                     return
                 self._publish(resource)
+                self._log_event(
+                    logging.INFO,
+                    "reverse_registered",
+                    user=user,
+                    connection_id=connection_id,
+                    resource_id=resource.resource_id,
+                    target=target,
+                    elapsed_ms=round((loop.time() - started) * 1000, 3),
+                )
                 # The registration handler owns the socket until its one use ends.
                 # Claiming removes its idle FD watcher before any business I/O.
+                stage = "resource_lifetime"
                 await resource.done
             else:
+                self._log_event(
+                    logging.INFO,
+                    "reverse_business_requested",
+                    user=user,
+                    connection_id=connection_id,
+                    target=target,
+                )
+                stage = "business_admission"
                 self._admit_business(user)
                 business_admitted = True
-                resource = await self._wait_for_resource(user)
+                stage = "resource_wait"
+                waiting = loop.time()
+                resource = await self._wait_for_resource(
+                    user, connection_id=connection_id, target=target
+                )
+                self._log_event(
+                    logging.INFO,
+                    "reverse_resource_claimed",
+                    user=user,
+                    connection_id=connection_id,
+                    resource_id=resource.resource_id,
+                    target=target,
+                    wait_ms=round((loop.time() - waiting) * 1000, 3),
+                )
+                stage = "pipe_setup"
                 relay = SpliceRelay(
                     connection,
                     resource.socket,
@@ -443,21 +606,70 @@ class ReverseServer:
                     call_budget=self._options.splice_call_budget,
                 )
                 reply_started = True
+                stage = "business_reply"
                 async with asyncio.timeout(self._options.reply_timeout):
                     await loop.sock_sendall(connection, encode_reply(ReplyCode.SUCCESS))
+                self._log_event(
+                    logging.INFO,
+                    "reverse_business_accepted",
+                    user=user,
+                    connection_id=connection_id,
+                    resource_id=resource.resource_id,
+                    target=target,
+                    elapsed_ms=round((loop.time() - started) * 1000, 3),
+                )
+                connecting = loop.time()
                 async with asyncio.timeout(self._options.request_timeout):
+                    stage = "reverse_connect"
                     await loop.sock_sendall(resource.socket, encode_connect(target))
                     # The CONNECT frame owns the writer until completely sent.
                     # Uplink then runs immediately; the reply remains the sole
                     # reader of the reverse socket until its full BND is consumed.
                     relay.start(forward_only=True)
+                    stage = "agent_reply"
                     await relay.read_handshake(read_reply(resource.socket))
+                self._log_event(
+                    logging.INFO,
+                    "reverse_target_connected",
+                    user=user,
+                    connection_id=connection_id,
+                    resource_id=resource.resource_id,
+                    target=target,
+                    elapsed_ms=round((loop.time() - connecting) * 1000, 3),
+                )
+                stage = "relay"
                 relay.start_reverse()
                 await relay.wait()
+            outcome = "completed"
         except asyncio.CancelledError:
+            outcome = "cancelled"
             raise
         except Exception as exc:
-            logger.debug("reverse session ended: %s", exc)
+            outcome = "failed"
+            level = failure_level(exc)
+            if stage == "relay" and isinstance(exc, OSError):
+                level = logging.INFO
+            elif stage == "socks_handshake" and isinstance(exc, ValueError):
+                level = logging.WARNING
+            self._log_event(
+                level,
+                "reverse_session_failed",
+                **({"user": user} if negotiated else {}),
+                connection_id=connection_id,
+                resource_id=resource.resource_id if resource is not None else None,
+                target=target,
+                stage=stage,
+                error_type=type(exc).__name__,
+                reply_code=failure_reply(exc)
+                if negotiated and not reply_started
+                else None,
+                elapsed_ms=round((loop.time() - started) * 1000, 3),
+                wait_ms=(
+                    round((loop.time() - waiting) * 1000, 3)
+                    if stage == "resource_wait"
+                    else None
+                ),
+            )
             if negotiated and not reply_started:
                 try:
                     async with asyncio.timeout(self._options.reply_timeout):
@@ -474,6 +686,17 @@ class ReverseServer:
             connection.close()
             if business_admitted:
                 self._release_business(user)
+            self._log_event(
+                logging.DEBUG,
+                "reverse_session_closed",
+                **({"user": user} if negotiated else {}),
+                connection_id=connection_id,
+                resource_id=resource.resource_id if resource is not None else None,
+                target=target,
+                stage=stage,
+                reason=outcome,
+                elapsed_ms=round((loop.time() - started) * 1000, 3),
+            )
 
     async def serve_forever(self) -> None:
         self._check_loop()
@@ -541,6 +764,7 @@ class ReverseServer:
             self._sessions.difference_update(pending)
             self._state = "closed"
             self._stopped.set()
+            self._log_event(logging.INFO, "reverse_server_stopped")
 
     async def __aenter__(self) -> Self:
         self._check_loop()

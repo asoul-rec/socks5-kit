@@ -1,11 +1,13 @@
 """Proactively supply single-use reverse tunnels through a local SOCKS proxy."""
 
 import asyncio
+import itertools
 import logging
 from typing import Self
 
 from .._io import read_address, read_exact
 from .._linux.splice import SpliceRelay, ensure_supported
+from .._logging import failure_level, log_event
 from ..client import Socks5Client, TcpTunnel
 from ..errors import ProtocolError
 from ..models import AddressType, Target
@@ -19,6 +21,7 @@ from ._common import (
 from ._options import ReverseAgentOptions
 
 logger = logging.getLogger(__name__)
+_resource_ids = itertools.count(1)
 
 
 class ReverseAgent:
@@ -86,6 +89,29 @@ class ReverseAgent:
             raise RuntimeError("agent must be used on its original event loop")
         return loop
 
+    def _log_event(self, level: int, event: str, **fields: object) -> None:
+        log_event(logger, level, event, agent_id=id(self), **fields)
+
+    def _log_pool(self, decision: str, *, spawn_count: int = 0) -> None:
+        if not logger.isEnabledFor(logging.DEBUG):
+            return
+        fields = {
+            "decision": decision,
+            "idle": self.idle_connections,
+            "opening": sum(state == "opening" for state in self._resources.values()),
+            "busy": self.active_connections,
+            "total": self.connection_count,
+            "desired_idle": self._options.idle_connections,
+            "max_connections": self._options.max_connections,
+        }
+        if spawn_count:
+            fields["spawn_count"] = spawn_count
+        if decision == "backoff":
+            fields["retry_in_ms"] = round(
+                max(0.0, self._retry_at - self._check_loop().time()) * 1000, 3
+            )
+        self._log_event(logging.DEBUG, "reverse_agent_pool", **fields)
+
     async def start(self) -> None:
         loop = self._check_loop()
         async with self._lock:
@@ -96,10 +122,25 @@ class ReverseAgent:
             self._state = "running"
             self._manager_task = loop.create_task(self._maintain_pool())
             self._manager_task.add_done_callback(self._manager_done)
+            self._log_event(
+                logging.INFO,
+                "reverse_agent_started",
+                registration_target=self._registration_target,
+                proxy=(self._proxy.ip, self._proxy.port),
+                egress_proxy=(self._egress_proxy.ip, self._egress_proxy.port),
+                desired_idle=self._options.idle_connections,
+                max_connections=self._options.max_connections,
+            )
 
     def _manager_done(self, task: asyncio.Task) -> None:
         if not task.cancelled():
             self._manager_error = task.exception()
+        if self._manager_error is not None:
+            self._log_event(
+                logging.ERROR,
+                "reverse_agent_manager_failed",
+                error_type=type(self._manager_error).__name__,
+            )
         if self._manager_error is not None and self._state == "running":
             self._state = "closing"
             self._close_task = self._check_loop().create_task(self._close(0.0, None))
@@ -120,10 +161,15 @@ class ReverseAgent:
                     # A probe must finish its SOCKS/ACK exchange before another
                     # starts, even if the retry deadline has already elapsed.
                     # Also let registrations from the preceding batch finish.
+                    self._log_pool("probe_in_flight")
                     await self._wake.wait()
                     continue
                 delay = self._retry_at - loop.time()
                 if delay <= 0:
+                    self._log_pool(
+                        "probe" if retrying else "refill",
+                        spawn_count=1 if retrying else needed,
+                    )
                     for _ in range(1 if retrying else needed):
                         task = loop.create_task(self._serve_resource())
                         # Reserve capacity before the coroutine can start. A task
@@ -132,11 +178,19 @@ class ReverseAgent:
                         task.add_done_callback(self._resource_done)
                     continue
                 try:
+                    self._log_pool("backoff")
                     async with asyncio.timeout(delay):
                         await self._wake.wait()
                 except TimeoutError:
                     pass
             else:
+                if available < self._options.idle_connections:
+                    decision = "capacity_full"
+                elif self.idle_connections < self._options.idle_connections:
+                    decision = "registration_in_flight"
+                else:
+                    decision = "idle_satisfied"
+                self._log_pool(decision)
                 await self._wake.wait()
 
     def _resource_done(self, task: asyncio.Task) -> None:
@@ -150,6 +204,13 @@ class ReverseAgent:
         self._retry_delay = min(
             self._options.reconnect_max_delay, self._retry_delay * 2
         )
+        self._log_event(
+            logging.INFO,
+            "reverse_agent_retry_scheduled",
+            retry_in_ms=round(
+                max(0.0, self._retry_at - self._check_loop().time()) * 1000, 3
+            ),
+        )
         self._wake.set()
 
     async def _serve_resource(self) -> None:
@@ -160,12 +221,29 @@ class ReverseAgent:
         relay: SpliceRelay | None = None
         request_started = reply_started = busy = False
         loop = self._check_loop()
+        resource_id = next(_resource_ids)
+        started = loop.time()
+        stage = "registration_proxy"
+        target = None
+        outcome = "closed"
         try:
+            self._log_event(
+                logging.DEBUG,
+                "reverse_agent_registration_started",
+                resource_id=resource_id,
+            )
             carrier = await self._proxy.connect(
                 self._registration_target, initial_data=REGISTRATION_HELLO
             )
             if self._state != "running":
                 return
+            self._log_event(
+                logging.DEBUG,
+                "reverse_agent_registration_proxy_connected",
+                resource_id=resource_id,
+                elapsed_ms=round((loop.time() - started) * 1000, 3),
+            )
+            stage = "registration_ack"
             async with asyncio.timeout(self._options.registration_timeout):
                 acknowledgement = await read_exact(
                     carrier.socket, len(REGISTRATION_ACK)
@@ -177,14 +255,29 @@ class ReverseAgent:
             self._resources[task] = "waiting"
             self._retry_delay = self._options.reconnect_initial_delay
             self._retry_at = 0.0
+            self._log_event(
+                logging.INFO,
+                "reverse_agent_registered",
+                resource_id=resource_id,
+                elapsed_ms=round((loop.time() - started) * 1000, 3),
+            )
             self._wake.set()
             # No timeout while idle: the carrier has no heartbeat frame, and a
             # slow or unused service should not churn healthy idle resources.
+            stage = "idle"
+            waiting = loop.time()
             first = await loop.sock_recv(carrier.socket, 1)
             if not first:
+                self._log_event(
+                    logging.INFO,
+                    "reverse_agent_idle_disconnected",
+                    resource_id=resource_id,
+                    idle_ms=round((loop.time() - waiting) * 1000, 3),
+                )
                 self._registration_failed()
                 return
             request_started = True
+            stage = "reverse_connect"
             async with asyncio.timeout(self._options.request_timeout):
                 command, _reserved = await read_exact(carrier.socket, 2)
                 if first[0] != VERSION:
@@ -198,28 +291,67 @@ class ReverseAgent:
                 target = Target(address.host, address.port)
             self._resources[task] = "busy"
             busy = True
+            self._log_event(
+                logging.INFO,
+                "reverse_agent_business_requested",
+                resource_id=resource_id,
+                target=target,
+            )
             # Refill as soon as a complete request consumes this resource, in
             # parallel with the potentially slow destination connection. Only
             # a registration ACK restores normal refill after a failure.
             self._wake.set()
+            connecting = loop.time()
+            stage = "egress_connect"
             destination, relay = await self._egress_proxy._connect_pipelined(
                 target,
                 carrier.socket,
                 byte_budget=self._options.splice_byte_budget,
                 call_budget=self._options.splice_call_budget,
             )
+            self._log_event(
+                logging.INFO,
+                "reverse_agent_target_connected",
+                resource_id=resource_id,
+                target=target,
+                elapsed_ms=round((loop.time() - connecting) * 1000, 3),
+            )
             reply_started = True
+            stage = "reverse_reply"
             async with asyncio.timeout(self._options.reply_timeout):
                 await loop.sock_sendall(
                     carrier.socket,
                     encode_reply(ReplyCode.SUCCESS, destination.bound_address),
                 )
+            stage = "relay"
+            self._log_event(
+                logging.DEBUG,
+                "reverse_agent_relay_started",
+                resource_id=resource_id,
+                target=target,
+            )
             relay.start_reverse()
             await relay.wait()
+            outcome = "completed"
         except asyncio.CancelledError:
+            outcome = "cancelled"
             raise
         except Exception as exc:
-            logger.debug("reverse agent resource ended: %s", exc)
+            outcome = "failed"
+            level = failure_level(exc)
+            if stage == "relay" and isinstance(exc, OSError):
+                level = logging.INFO
+            elif stage == "reverse_connect" and isinstance(exc, ValueError):
+                level = logging.WARNING
+            self._log_event(
+                level,
+                "reverse_agent_resource_failed",
+                resource_id=resource_id,
+                target=target,
+                stage=stage,
+                error_type=type(exc).__name__,
+                elapsed_ms=round((loop.time() - started) * 1000, 3),
+            )
             if not busy:
                 self._registration_failed()
             if carrier is not None and request_started and not reply_started:
@@ -237,6 +369,15 @@ class ReverseAgent:
                 destination.close()
             if carrier is not None:
                 carrier.close()
+            self._log_event(
+                logging.DEBUG,
+                "reverse_agent_resource_closed",
+                resource_id=resource_id,
+                target=target,
+                stage=stage,
+                reason=outcome,
+                elapsed_ms=round((loop.time() - started) * 1000, 3),
+            )
 
     async def serve_forever(self) -> None:
         self._check_loop()
@@ -292,6 +433,7 @@ class ReverseAgent:
                 await asyncio.gather(*pending, return_exceptions=True)
             self._state = "closed"
             self._stopped.set()
+            self._log_event(logging.INFO, "reverse_agent_stopped")
 
     async def __aenter__(self) -> Self:
         self._check_loop()

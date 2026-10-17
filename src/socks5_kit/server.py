@@ -9,16 +9,19 @@ import itertools
 import logging
 import math
 import socket
+import time
 from typing import Self
 
 from ._io import negotiate_server, read_request
 from ._linux.splice import SpliceRelay, ensure_supported
+from ._logging import failure_level, log_event
 from .client import Socks5Client, TcpTunnel
 from .errors import ProtocolError, RejectTarget, UpstreamRejected
 from .models import AddressType, RewriteCallback, RewriteContext, ServerOptions, Target
 from .protocol import Command, ReplyCode, encode_reply
 
 logger = logging.getLogger(__name__)
+_server_ids = itertools.count(1)
 
 
 def _peer_endpoint(peer: tuple) -> tuple[str, int]:
@@ -65,6 +68,7 @@ class Socks5RewriteServer:
         self._state = "new"
         self._accept_error: BaseException | None = None
         self._close_task: asyncio.Task | None = None
+        self._server_id = next(_server_ids)
 
     @property
     def upstream_ip(self) -> str:
@@ -135,6 +139,14 @@ class Socks5RewriteServer:
             self._state = "running"
             self._accept_task = loop.create_task(self._accept_loop())
             self._accept_task.add_done_callback(self._accept_done)
+            logger.info(
+                "SOCKS rewrite server started server_id=%s listener=%r proxy=%r "
+                "max_connections=%s",
+                self._server_id,
+                self.address,
+                (self.upstream_ip, self.upstream_port),
+                self._options.max_connections,
+            )
 
     def _accept_done(self, task: asyncio.Task) -> None:
         if not task.cancelled():
@@ -149,6 +161,14 @@ class Socks5RewriteServer:
         while True:
             connection, peer = await self._loop.sock_accept(self._listener)
             if len(self._sessions) >= self._options.max_connections:
+                logger.warning(
+                    "SOCKS rewrite rejected server_id=%s listener=%r peer=%r "
+                    "reason=max_connections active=%s",
+                    self._server_id,
+                    self.address,
+                    peer,
+                    len(self._sessions),
+                )
                 connection.close()
                 continue
             try:
@@ -176,10 +196,29 @@ class Socks5RewriteServer:
         negotiated = reply_started = False
         tunnel: TcpTunnel | None = None
         relay: SpliceRelay | None = None
+        started = time.monotonic()
+        stage = "handshake"
+        target = rewritten = None
+        logger.debug(
+            "SOCKS rewrite accepted server_id=%s session_id=%s listener=%r peer=%r "
+            "active=%s",
+            self._server_id,
+            session_id,
+            connection.getsockname(),
+            peer,
+            self.active_connections,
+        )
         try:
             async with asyncio.timeout(self._options.handshake_timeout):
                 credentials = await negotiate_server(connection)
                 if credentials is None:
+                    logger.info(
+                        "SOCKS rewrite rejected server_id=%s session_id=%s peer=%r "
+                        "stage=method_negotiation reason=no_acceptable_method",
+                        self._server_id,
+                        session_id,
+                        peer,
+                    )
                     return
                 negotiated = True
                 command, address = await read_request(connection)
@@ -198,20 +237,35 @@ class Socks5RewriteServer:
                 username=credentials[0],
                 password=credentials[1],
             )
+            stage = "rewrite"
             async with asyncio.timeout(self._options.callback_timeout):
-                rewritten = self._rewrite(target, context)
-                if inspect.isawaitable(rewritten):
-                    rewritten = await rewritten
-            if rewritten is None:
+                candidate = self._rewrite(target, context)
+                if inspect.isawaitable(candidate):
+                    candidate = await candidate
+            if candidate is None:
                 raise RejectTarget("target rejected by callback")
             if (
-                not isinstance(rewritten, Target)
-                or rewritten.kind != AddressType.DOMAIN
+                not isinstance(candidate, Target)
+                or candidate.kind != AddressType.DOMAIN
             ):
                 raise TypeError("rewrite must return a DOMAIN Target or None")
+            rewritten = candidate
             if self._state != "running":
                 return
+            logger.info(
+                "SOCKS rewrite allowed server_id=%s session_id=%s peer=%r target=%r "
+                "rewritten=%r proxy=%r elapsed_ms=%.3f",
+                self._server_id,
+                session_id,
+                peer,
+                target,
+                rewritten,
+                (self.upstream_ip, self.upstream_port),
+                (time.monotonic() - started) * 1000,
+            )
+            stage = "upstream_connect"
             tunnel = await self._client.connect(rewritten)
+            stage = "relay_setup"
             relay = SpliceRelay(
                 connection,
                 tunnel.socket,
@@ -219,15 +273,52 @@ class Socks5RewriteServer:
                 call_budget=self._options.splice_call_budget,
             )
             reply_started = True
+            stage = "success_reply"
             async with asyncio.timeout(self._options.reply_timeout):
                 await self._check_loop().sock_sendall(
                     connection, encode_reply(ReplyCode.SUCCESS, tunnel.bound_address)
                 )
+            stage = "relay"
+            logger.info(
+                "SOCKS rewrite established server_id=%s session_id=%s peer=%r "
+                "target=%r rewritten=%r proxy=%r bound=%r elapsed_ms=%.3f",
+                self._server_id,
+                session_id,
+                peer,
+                target,
+                rewritten,
+                (self.upstream_ip, self.upstream_port),
+                tunnel.bound_address,
+                (time.monotonic() - started) * 1000,
+            )
             await relay.run()
         except asyncio.CancelledError:
+            logger.debug(
+                "SOCKS rewrite cancelled server_id=%s session_id=%s peer=%r stage=%s",
+                self._server_id,
+                session_id,
+                peer,
+                stage,
+            )
             raise
         except Exception as exc:
-            logger.debug("SOCKS session %s ended: %s", session_id, exc)
+            log_event(
+                logger,
+                (
+                    logging.DEBUG
+                    if stage == "relay" and isinstance(exc, OSError)
+                    else failure_level(exc)
+                ),
+                "socks_rewrite_failed",
+                server_id=self._server_id,
+                session_id=session_id,
+                peer=peer,
+                target=target,
+                rewritten=rewritten,
+                stage=stage,
+                error_type=type(exc).__name__,
+                elapsed_ms=round((time.monotonic() - started) * 1000, 3),
+            )
             if negotiated and not reply_started:
                 await self._send_failure(connection, self._failure_reply(exc))
         finally:
@@ -236,6 +327,15 @@ class Socks5RewriteServer:
             if tunnel is not None:
                 tunnel.close()
             connection.close()
+            logger.debug(
+                "SOCKS rewrite closed server_id=%s session_id=%s peer=%r stage=%s "
+                "duration_ms=%.3f",
+                self._server_id,
+                session_id,
+                peer,
+                stage,
+                (time.monotonic() - started) * 1000,
+            )
 
     @staticmethod
     def _failure_reply(error: Exception) -> int:
@@ -292,6 +392,7 @@ class Socks5RewriteServer:
             raise
 
     async def _close(self, grace_period: float, initiator: asyncio.Task | None) -> None:
+        listener = self.address if self._listener is not None else None
         try:
             if self._accept_task is not None:
                 self._accept_task.cancel()
@@ -314,6 +415,12 @@ class Socks5RewriteServer:
             self._sessions.difference_update(pending)
             self._state = "closed"
             self._stopped.set()
+            logger.info(
+                "SOCKS rewrite server stopped server_id=%s listener=%r active=%s",
+                self._server_id,
+                listener,
+                self.active_connections,
+            )
 
     async def __aenter__(self) -> Self:
         self._check_loop()

@@ -61,6 +61,7 @@ asyncio.run(main())
 - [DNS API](docs/dns.md)
 - [reverse 协议与使用示例](docs/reverse.md)
 - [测试与代理兼容性](docs/validation.md)
+- [访问日志与 reverse 排队诊断](docs/logging.md)
 - [吞吐与 CPU benchmark](docs/benchmark.md)
 - [SOCKS5 UDP 实现调查](docs/udp-interop.md)
 

@@ -2,16 +2,23 @@
 
 import asyncio
 import ipaddress
+import itertools
+import logging
 import math
 import socket
+import time
 from dataclasses import dataclass
 from typing import Self
 
 from ._io import read_exact, read_reply
 from ._linux.splice import SpliceRelay
+from ._logging import failure_level
 from .errors import ProtocolError
 from .models import BoundAddress, Target
 from .protocol import NO_AUTH, VERSION, encode_connect
+
+logger = logging.getLogger(__name__)
+_client_ids = itertools.count(1)
 
 
 @dataclass(slots=True)
@@ -83,6 +90,8 @@ class Socks5Client:
         self.port = port
         self.connect_timeout = connect_timeout
         self.handshake_timeout = handshake_timeout
+        self._client_id = next(_client_ids)
+        self._sequence = itertools.count(1)
 
     async def _open_socket(self) -> socket.socket:
         loop = asyncio.get_running_loop()
@@ -137,10 +146,24 @@ class Socks5Client:
         if not isinstance(initial_data, bytes):
             raise TypeError("initial_data must be bytes")
         loop = asyncio.get_running_loop()
-        sock = await self._open_socket()
+        session_id = next(self._sequence)
+        started = time.monotonic()
+        stage = "proxy_connect"
+        sock: socket.socket | None = None
         relay: SpliceRelay | None = None
         try:
+            logger.debug(
+                "SOCKS client connecting client_id=%s session_id=%s proxy=%r "
+                "target=%r pipelined=%s",
+                self._client_id,
+                session_id,
+                (self.ip, self.port),
+                target,
+                source is not None,
+            )
+            sock = await self._open_socket()
             async with asyncio.timeout(self.handshake_timeout):
+                stage = "method_negotiation"
                 await loop.sock_sendall(sock, bytes([VERSION, 1, NO_AUTH]))
                 version, method = await read_exact(sock, 2)
                 if version != VERSION or method != NO_AUTH:
@@ -149,20 +172,67 @@ class Socks5Client:
                     relay = SpliceRelay(
                         source, sock, byte_budget=byte_budget, call_budget=call_budget
                     )
+                stage = "connect_reply"
                 await loop.sock_sendall(sock, encode_connect(target) + initial_data)
                 if relay is None:
                     bound = await read_reply(sock)
                 else:
                     relay.start(forward_only=True)
                     bound = await relay.read_handshake(read_reply(sock))
+            logger.info(
+                "SOCKS client established client_id=%s session_id=%s proxy=%r "
+                "target=%r bound=%r elapsed_ms=%.3f",
+                self._client_id,
+                session_id,
+                (self.ip, self.port),
+                target,
+                bound,
+                (time.monotonic() - started) * 1000,
+            )
             return TcpTunnel(sock, bound, loop), relay
         except ProtocolError as exc:
+            self._log_failure(session_id, target, stage, started, exc)
             if relay is not None:
                 relay.close()
-            sock.close()
+            if sock is not None:
+                sock.close()
             raise ProtocolError(f"invalid upstream handshake: {exc}") from exc
-        except BaseException:
+        except BaseException as exc:
+            if isinstance(exc, Exception):
+                self._log_failure(session_id, target, stage, started, exc)
+            else:
+                logger.debug(
+                    "SOCKS client cancelled client_id=%s session_id=%s proxy=%r "
+                    "target=%r stage=%s",
+                    self._client_id,
+                    session_id,
+                    (self.ip, self.port),
+                    target,
+                    stage,
+                )
             if relay is not None:
                 relay.close()
-            sock.close()
+            if sock is not None:
+                sock.close()
             raise
+
+    def _log_failure(
+        self,
+        session_id: int,
+        target: Target,
+        stage: str,
+        started: float,
+        error: Exception,
+    ) -> None:
+        logger.log(
+            failure_level(error),
+            "SOCKS client failed client_id=%s session_id=%s proxy=%r target=%r "
+            "stage=%s error_type=%s elapsed_ms=%.3f",
+            self._client_id,
+            session_id,
+            (self.ip, self.port),
+            target,
+            stage,
+            type(error).__name__,
+            (time.monotonic() - started) * 1000,
+        )
