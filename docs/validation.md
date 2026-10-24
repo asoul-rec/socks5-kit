@@ -399,3 +399,17 @@ UTF-8 字节长度、空字段、错误/分片/合包认证回复、超时/取�
 原有单用户退避、注册 ACK、首包流水、资源配额和日志边界回归继续通过。
 全量 **862 passed，无跳过**，使用 asyncio debug、Python dev 模式、`-W error` 和 DEBUG 日志。
 Ruff、格式检查和离线 uv 构建通过，wheel 已确认包含新增认证模块。
+
+## CI 与日期版本 Release（2026-10-24）
+
+新增 GitHub Actions：PR 执行 Ruff、格式检查、构建并安装 wheel 后运行完整测试；
+`master` 通过检查后串行分配 UTC 日期版本，构建并校验日期版本 wheel，再创建对应
+GitHub Release 和附件。版本为 `年.月.日.序号`，同日取最大现有标签序号加 1。
+配置与使用说明见 [自动发布文档](releases.md)。
+
+新增 8 项版本测试，覆盖首个版本、同日数字递增、日期/年份切换、补零标签、无关标签，
+以及 CLI 不修改仓库。官方 actionlint 1.7.12 校验工作流通过；Ruff 和格式检查通过。
+在独立临时仓库中预置同日 `.1`、`.3`、`.10` 标签，实际生成 `.11`，通过 uv 更新临时
+项目版本及 lockfile、构建、替换 editable 安装，确认导入来自 site-packages 且元数据版本一致。
+对该 wheel 执行全量 **870 passed，无跳过**，启用 asyncio debug、Python dev 模式、
+`-W error` 及 DEBUG 日志。GitHub 托管 runner 与真实 Release 发布须在工作流推送后验证。

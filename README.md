@@ -64,6 +64,7 @@ asyncio.run(main())
 - [reverse 协议与使用示例](docs/reverse.md)
 - [测试与代理兼容性](docs/validation.md)
 - [访问日志与 reverse 排队诊断](docs/logging.md)
+- [自动测试与日期版本发布](docs/releases.md)
 - [吞吐与 CPU benchmark](docs/benchmark.md)
 - [SOCKS5 UDP 实现调查](docs/udp-interop.md)
 
@@ -76,3 +77,6 @@ uv run ruff check .
 uv run ruff format --check .
 uv build
 ```
+
+PR 自动运行 Linux / Python 3.14 测试；`master` 检查通过后自动发布 wheel 到 GitHub Release。
+版本按 UTC 日期编号，例如 `2026.10.24.1`，同日序号递增。

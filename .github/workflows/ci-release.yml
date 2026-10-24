@@ -1,0 +1,89 @@
+name: CI and Release
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PYTHONASYNCIODEBUG: "1"
+
+jobs:
+  test:
+    name: Linux / Python 3.14
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          version: "0.12.23"
+          python-version: "3.14"
+          enable-cache: true
+      - name: Install locked dependencies
+        run: uv sync --locked --dev
+      - name: Lint and formatting
+        run: |
+          uv run --no-sync ruff check .
+          uv run --no-sync ruff format --check .
+      - name: Build and install wheel
+        run: |
+          uv build --wheel --no-sources --clear
+          uv pip install --reinstall dist/*.whl
+      - name: Test installed wheel
+        run: uv run --no-sync python -X dev -m pytest -q -W error --log-level=DEBUG
+
+  release:
+    name: Publish wheel
+    needs: test
+    if: github.ref == 'refs/heads/master' && github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    concurrency:
+      group: release-${{ github.repository }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          version: "0.12.23"
+          python-version: "3.14"
+          enable-cache: true
+      - name: Allocate date version
+        id: version
+        run: |
+          git fetch --tags origin
+          version="$(uv run --no-project python tools/release_version.py)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          uv version --no-sync "$version"
+      - name: Build release wheel
+        run: uv build --wheel --no-sources --clear
+      - name: Verify release wheel
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          uv venv "$RUNNER_TEMP/release-check"
+          uv pip install --python "$RUNNER_TEMP/release-check/bin/python" dist/*.whl
+          "$RUNNER_TEMP/release-check/bin/python" -I -c \
+            'import os; import socks5_kit; from importlib.metadata import version; assert version("socks5-kit") == os.environ["RELEASE_VERSION"]'
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          gh release create "$RELEASE_TAG" dist/*.whl \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "$RELEASE_TAG" \
+            --generate-notes
