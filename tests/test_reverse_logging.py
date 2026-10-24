@@ -35,7 +35,7 @@ LOG_FIELDS = set(
     "total desired_idle resources business pending slots user_idle user_resources "
     "user_business user_pending user_slots connections max_connections max_resources "
     "max_resources_per_user max_pending_connections queue_timeout queue_limit "
-    "retry_in_ms".split()
+    "retry_in_ms user_count global_total max_total_connections".split()
 )
 
 
@@ -63,7 +63,7 @@ def assert_event_fields(record, *fields):
 
 SERVER_BUSINESS_FIELDS = ("server_id", "connection_id", "user", "target")
 SERVER_RESOURCE_FIELDS = (*SERVER_BUSINESS_FIELDS, "resource_id")
-AGENT_RESOURCE_FIELDS = ("agent_id", "resource_id")
+AGENT_RESOURCE_FIELDS = ("agent_id", "resource_id", "user")
 
 
 def assert_no_secrets(caplog, *secrets):
@@ -375,6 +375,7 @@ def test_agent_ack_and_egress_success_logs_follow_real_handshakes(caplog):
                 "egress_proxy",
                 "desired_idle",
                 "max_connections",
+                "user_count",
             )
             await registration_seen.wait()
             assert not events(caplog, "reverse_agent_registered")
@@ -411,6 +412,7 @@ def test_agent_ack_and_egress_success_logs_follow_real_handshakes(caplog):
             assert_event_fields(
                 capacity,
                 "agent_id",
+                "user",
                 "decision",
                 "idle",
                 "opening",
@@ -491,7 +493,7 @@ def test_agent_retry_logs_explain_backoff_and_single_inflight_probe(caplog):
                 assert len(events(caplog, "reverse_agent_retry_scheduled")) == 3
                 for record in events(caplog, "reverse_agent_retry_scheduled"):
                     assert record.levelno == logging.INFO
-                    assert_event_fields(record, "agent_id", "retry_in_ms")
+                    assert_event_fields(record, "agent_id", "user", "retry_in_ms")
                     assert record.retry_in_ms > 0
                 failures = events(caplog, "reverse_agent_resource_failed")
                 assert len(failures) == 3

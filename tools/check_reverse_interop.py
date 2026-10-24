@@ -348,15 +348,23 @@ class RecordingClient(Socks5Client):
         self.targets = []
         self.initial_payloads = []
 
-    async def connect(self, target, *, initial_data=b""):
+    async def connect(self, target, *, initial_data=b"", credentials=None):
         self.targets.append(target)
         self.initial_payloads.append(initial_data)
-        return await super().connect(target, initial_data=initial_data)
+        return await super().connect(
+            target, initial_data=initial_data, credentials=credentials
+        )
 
-    async def _connect_pipelined(self, target, source, *, byte_budget, call_budget):
+    async def _connect_pipelined(
+        self, target, source, *, credentials=None, byte_budget, call_budget
+    ):
         self.targets.append(target)
         return await super()._connect_pipelined(
-            target, source, byte_budget=byte_budget, call_budget=call_budget
+            target,
+            source,
+            credentials=credentials,
+            byte_budget=byte_budget,
+            call_budget=call_budget,
         )
 
 

@@ -505,8 +505,8 @@ def test_bad_ack_retries_back_off_and_valid_ack_resets_backoff_before_business()
                 assert gaps[0] >= 0.025
                 assert gaps[1] >= 0.05
                 assert gaps[2] >= 0.05
-                assert agent._retry_delay == options.reconnect_initial_delay
-                assert agent._retry_at == 0
+                assert agent._pools[None].retry_delay == options.reconnect_initial_delay
+                assert agent._pools[None].retry_at == 0
                 assert agent.active_connections == 0
 
     run(scenario)
@@ -564,7 +564,10 @@ def test_successful_parallel_ack_wakes_manager_waiting_for_registration_backoff(
                     lambda: agent.connection_count == 1 and not agent._wake.is_set()
                 )
                 assert agent.idle_connections == 0
-                assert agent._retry_at - asyncio.get_running_loop().time() > 0.5
+                assert (
+                    agent._pools[None].retry_at - asyncio.get_running_loop().time()
+                    > 0.5
+                )
                 release_ack.set()
                 async with asyncio.timeout(0.2):
                     await replacement_started.wait()

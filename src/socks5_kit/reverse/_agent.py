@@ -3,8 +3,11 @@
 import asyncio
 import itertools
 import logging
+from collections.abc import Sequence
+from dataclasses import dataclass, field
 from typing import Self
 
+from .._credentials import validate_credentials
 from .._io import read_address, read_exact
 from .._linux.splice import SpliceRelay, ensure_supported
 from .._logging import failure_level, log_event
@@ -24,6 +27,23 @@ logger = logging.getLogger(__name__)
 _resource_ids = itertools.count(1)
 
 
+@dataclass(eq=False, slots=True)
+class _UserPool:
+    credentials: tuple[str, str] | None = field(repr=False)
+    retry_delay: float
+    retry_at: float = 0.0
+
+    @property
+    def user(self) -> str | None:
+        return self.credentials[0] if self.credentials is not None else None
+
+
+@dataclass(slots=True)
+class _Resource:
+    pool: _UserPool
+    state: str = "opening"
+
+
 class ReverseAgent:
     """Keep a bounded pool of reverse resources registered through ``proxy``.
 
@@ -41,6 +61,7 @@ class ReverseAgent:
         *,
         options: ReverseAgentOptions | None = None,
         egress_proxy: Socks5Client | None = None,
+        users: Sequence[None | str | tuple[str, str]] = (None,),
     ) -> None:
         if not isinstance(registration_target, Target):
             raise TypeError("registration_target must be a Target")
@@ -56,17 +77,43 @@ class ReverseAgent:
         self._proxy = proxy
         self._egress_proxy = proxy if egress_proxy is None else egress_proxy
         self._options = options or ReverseAgentOptions()
+        if not isinstance(users, Sequence) or isinstance(
+            users, (str, bytes, bytearray)
+        ):
+            raise TypeError(
+                "users must be a sequence of None, usernames or credential pairs"
+            )
+        if not users:
+            raise ValueError("users must not be empty")
+        self._pools: dict[str | None, _UserPool] = {}
+        for value in users:
+            credentials = validate_credentials(
+                (value, "") if isinstance(value, str) else value
+            )
+            user = credentials[0] if credentials is not None else None
+            if user in self._pools:
+                raise ValueError("users must not contain duplicate usernames")
+            self._pools[user] = _UserPool(
+                credentials, self._options.reconnect_initial_delay
+            )
+        if (
+            self._options.max_total_connections is not None
+            and self._options.max_total_connections
+            < len(self._pools) * self._options.idle_connections
+        ):
+            raise ValueError(
+                "max_total_connections must cover all users' idle_connections"
+            )
         self._loop: asyncio.AbstractEventLoop | None = None
         self._state = "new"
-        self._resources: dict[asyncio.Task, str] = {}
+        self._resources: dict[asyncio.Task, _Resource] = {}
         self._manager_task: asyncio.Task | None = None
         self._manager_error: BaseException | None = None
         self._close_task: asyncio.Task | None = None
         self._lock = asyncio.Lock()
         self._wake = asyncio.Event()
         self._stopped = asyncio.Event()
-        self._retry_at = 0.0
-        self._retry_delay = self._options.reconnect_initial_delay
+        self._next_pool = 0
 
     @property
     def connection_count(self) -> int:
@@ -76,12 +123,34 @@ class ReverseAgent:
     @property
     def idle_connections(self) -> int:
         """Server-ACKed streams waiting for a complete reverse CONNECT."""
-        return sum(state == "waiting" for state in self._resources.values())
+        return sum(resource.state == "waiting" for resource in self._resources.values())
 
     @property
     def active_connections(self) -> int:
         """Resources connecting to their business target or relaying bytes."""
-        return sum(state == "busy" for state in self._resources.values())
+        return sum(resource.state == "busy" for resource in self._resources.values())
+
+    def _user_resources(self, user: str | None) -> list[_Resource]:
+        if user is not None and not isinstance(user, str):
+            raise TypeError("user must be a username string or None")
+        pool = self._pools.get(user)
+        return [
+            resource for resource in self._resources.values() if resource.pool is pool
+        ]
+
+    def idle_count(self, user: str | None = None) -> int:
+        """ACK-confirmed idle resources for one local SOCKS username."""
+        return sum(
+            resource.state == "waiting" for resource in self._user_resources(user)
+        )
+
+    def connection_count_for(self, user: str | None = None) -> int:
+        """Opening, idle and busy resources for one local SOCKS username."""
+        return len(self._user_resources(user))
+
+    def active_count(self, user: str | None = None) -> int:
+        """Resources serving business requests for one local SOCKS username."""
+        return sum(resource.state == "busy" for resource in self._user_resources(user))
 
     def _check_loop(self) -> asyncio.AbstractEventLoop:
         loop = asyncio.get_running_loop()
@@ -92,23 +161,32 @@ class ReverseAgent:
     def _log_event(self, level: int, event: str, **fields: object) -> None:
         log_event(logger, level, event, agent_id=id(self), **fields)
 
-    def _log_pool(self, decision: str, *, spawn_count: int = 0) -> None:
+    def _log_pool(
+        self, pool: _UserPool, decision: str, *, spawn_count: int = 0
+    ) -> None:
         if not logger.isEnabledFor(logging.DEBUG):
             return
         fields = {
+            "user": pool.user,
             "decision": decision,
-            "idle": self.idle_connections,
-            "opening": sum(state == "opening" for state in self._resources.values()),
-            "busy": self.active_connections,
-            "total": self.connection_count,
+            "idle": self.idle_count(pool.user),
+            "opening": sum(
+                resource.state == "opening"
+                for resource in self._user_resources(pool.user)
+            ),
+            "busy": self.active_count(pool.user),
+            "total": self.connection_count_for(pool.user),
             "desired_idle": self._options.idle_connections,
             "max_connections": self._options.max_connections,
         }
+        if self._options.max_total_connections is not None:
+            fields["global_total"] = self.connection_count
+            fields["max_total_connections"] = self._options.max_total_connections
         if spawn_count:
             fields["spawn_count"] = spawn_count
         if decision == "backoff":
             fields["retry_in_ms"] = round(
-                max(0.0, self._retry_at - self._check_loop().time()) * 1000, 3
+                max(0.0, pool.retry_at - self._check_loop().time()) * 1000, 3
             )
         self._log_event(logging.DEBUG, "reverse_agent_pool", **fields)
 
@@ -130,6 +208,8 @@ class ReverseAgent:
                 egress_proxy=(self._egress_proxy.ip, self._egress_proxy.port),
                 desired_idle=self._options.idle_connections,
                 max_connections=self._options.max_connections,
+                user_count=len(self._pools),
+                max_total_connections=self._options.max_total_connections,
             )
 
     def _manager_done(self, task: asyncio.Task) -> None:
@@ -148,50 +228,67 @@ class ReverseAgent:
 
     async def _maintain_pool(self) -> None:
         loop = self._check_loop()
+        pools = tuple(self._pools.values())
         while self._state == "running":
             self._wake.clear()
-            available = sum(state != "busy" for state in self._resources.values())
-            needed = min(
-                self._options.idle_connections - available,
-                self._options.max_connections - self.connection_count,
-            )
-            if needed > 0:
-                retrying = self._retry_at > 0
-                if retrying and "opening" in self._resources.values():
-                    # A probe must finish its SOCKS/ACK exchange before another
-                    # starts, even if the retry deadline has already elapsed.
-                    # Also let registrations from the preceding batch finish.
-                    self._log_pool("probe_in_flight")
-                    await self._wake.wait()
-                    continue
-                delay = self._retry_at - loop.time()
-                if delay <= 0:
-                    self._log_pool(
-                        "probe" if retrying else "refill",
-                        spawn_count=1 if retrying else needed,
+            counts = {pool: {"waiting": 0, "opening": 0, "busy": 0} for pool in pools}
+            for resource in self._resources.values():
+                counts[resource.pool][resource.state] += 1
+            spawned = False
+            earliest_retry: float | None = None
+            start = self._next_pool
+            for offset in range(len(pools)):
+                index = (start + offset) % len(pools)
+                pool = pools[index]
+                count = counts[pool]
+                available = count["waiting"] + count["opening"]
+                if available >= self._options.idle_connections:
+                    decision = (
+                        "idle_satisfied"
+                        if count["waiting"] >= self._options.idle_connections
+                        else "registration_in_flight"
                     )
-                    for _ in range(1 if retrying else needed):
-                        task = loop.create_task(self._serve_resource())
-                        # Reserve capacity before the coroutine can start. A task
-                        # cancelled before entry owns no socket or pipe yet.
-                        self._resources[task] = "opening"
-                        task.add_done_callback(self._resource_done)
+                    self._log_pool(pool, decision)
                     continue
+                if sum(count.values()) >= self._options.max_connections:
+                    self._log_pool(pool, "capacity_full")
+                    continue
+                if (
+                    self._options.max_total_connections is not None
+                    and self.connection_count >= self._options.max_total_connections
+                ):
+                    self._log_pool(pool, "global_capacity_full")
+                    continue
+                retrying = pool.retry_at > 0
+                if retrying and count["opening"]:
+                    self._log_pool(pool, "probe_in_flight")
+                    continue
+                if pool.retry_at > loop.time():
+                    self._log_pool(pool, "backoff")
+                    earliest_retry = (
+                        pool.retry_at
+                        if earliest_retry is None
+                        else min(earliest_retry, pool.retry_at)
+                    )
+                    continue
+                self._log_pool(pool, "probe" if retrying else "refill", spawn_count=1)
+                task = loop.create_task(self._serve_resource(pool))
+                # Reserve both user and global capacity before the task starts.
+                self._resources[task] = _Resource(pool)
+                task.add_done_callback(self._resource_done)
+                # One launch per group per round keeps the shared budget fair.
+                self._next_pool = (index + 1) % len(pools)
+                spawned = True
+            if spawned:
+                continue
+            if earliest_retry is None:
+                await self._wake.wait()
+            else:
                 try:
-                    self._log_pool("backoff")
-                    async with asyncio.timeout(delay):
+                    async with asyncio.timeout(max(0.0, earliest_retry - loop.time())):
                         await self._wake.wait()
                 except TimeoutError:
                     pass
-            else:
-                if available < self._options.idle_connections:
-                    decision = "capacity_full"
-                elif self.idle_connections < self._options.idle_connections:
-                    decision = "registration_in_flight"
-                else:
-                    decision = "idle_satisfied"
-                self._log_pool(decision)
-                await self._wake.wait()
 
     def _resource_done(self, task: asyncio.Task) -> None:
         self._resources.pop(task, None)
@@ -199,21 +296,20 @@ class ReverseAgent:
             logger.error("unhandled reverse agent resource error", exc_info=error)
         self._wake.set()
 
-    def _registration_failed(self) -> None:
-        self._retry_at = self._check_loop().time() + self._retry_delay
-        self._retry_delay = min(
-            self._options.reconnect_max_delay, self._retry_delay * 2
-        )
+    def _registration_failed(self, pool: _UserPool) -> None:
+        pool.retry_at = self._check_loop().time() + pool.retry_delay
+        pool.retry_delay = min(self._options.reconnect_max_delay, pool.retry_delay * 2)
         self._log_event(
             logging.INFO,
             "reverse_agent_retry_scheduled",
+            user=pool.user,
             retry_in_ms=round(
-                max(0.0, self._retry_at - self._check_loop().time()) * 1000, 3
+                max(0.0, pool.retry_at - self._check_loop().time()) * 1000, 3
             ),
         )
         self._wake.set()
 
-    async def _serve_resource(self) -> None:
+    async def _serve_resource(self, pool: _UserPool) -> None:
         task = asyncio.current_task()
         assert task is not None
         carrier: TcpTunnel | None = None
@@ -231,9 +327,15 @@ class ReverseAgent:
                 logging.DEBUG,
                 "reverse_agent_registration_started",
                 resource_id=resource_id,
+                user=pool.user,
+            )
+            credentials = (
+                {} if pool.credentials is None else {"credentials": pool.credentials}
             )
             carrier = await self._proxy.connect(
-                self._registration_target, initial_data=REGISTRATION_HELLO
+                self._registration_target,
+                initial_data=REGISTRATION_HELLO,
+                **credentials,
             )
             if self._state != "running":
                 return
@@ -241,6 +343,7 @@ class ReverseAgent:
                 logging.DEBUG,
                 "reverse_agent_registration_proxy_connected",
                 resource_id=resource_id,
+                user=pool.user,
                 elapsed_ms=round((loop.time() - started) * 1000, 3),
             )
             stage = "registration_ack"
@@ -252,13 +355,14 @@ class ReverseAgent:
                     raise ProtocolError("invalid reverse registration acknowledgement")
             if self._state != "running":
                 return
-            self._resources[task] = "waiting"
-            self._retry_delay = self._options.reconnect_initial_delay
-            self._retry_at = 0.0
+            self._resources[task].state = "waiting"
+            pool.retry_delay = self._options.reconnect_initial_delay
+            pool.retry_at = 0.0
             self._log_event(
                 logging.INFO,
                 "reverse_agent_registered",
                 resource_id=resource_id,
+                user=pool.user,
                 elapsed_ms=round((loop.time() - started) * 1000, 3),
             )
             self._wake.set()
@@ -272,9 +376,10 @@ class ReverseAgent:
                     logging.INFO,
                     "reverse_agent_idle_disconnected",
                     resource_id=resource_id,
+                    user=pool.user,
                     idle_ms=round((loop.time() - waiting) * 1000, 3),
                 )
-                self._registration_failed()
+                self._registration_failed(pool)
                 return
             request_started = True
             stage = "reverse_connect"
@@ -289,12 +394,13 @@ class ReverseAgent:
                         ReplyCode.COMMAND_NOT_SUPPORTED,
                     )
                 target = Target(address.host, address.port)
-            self._resources[task] = "busy"
+            self._resources[task].state = "busy"
             busy = True
             self._log_event(
                 logging.INFO,
                 "reverse_agent_business_requested",
                 resource_id=resource_id,
+                user=pool.user,
                 target=target,
             )
             # Refill as soon as a complete request consumes this resource, in
@@ -306,6 +412,7 @@ class ReverseAgent:
             destination, relay = await self._egress_proxy._connect_pipelined(
                 target,
                 carrier.socket,
+                **credentials,
                 byte_budget=self._options.splice_byte_budget,
                 call_budget=self._options.splice_call_budget,
             )
@@ -313,6 +420,7 @@ class ReverseAgent:
                 logging.INFO,
                 "reverse_agent_target_connected",
                 resource_id=resource_id,
+                user=pool.user,
                 target=target,
                 elapsed_ms=round((loop.time() - connecting) * 1000, 3),
             )
@@ -328,6 +436,7 @@ class ReverseAgent:
                 logging.DEBUG,
                 "reverse_agent_relay_started",
                 resource_id=resource_id,
+                user=pool.user,
                 target=target,
             )
             relay.start_reverse()
@@ -347,13 +456,14 @@ class ReverseAgent:
                 level,
                 "reverse_agent_resource_failed",
                 resource_id=resource_id,
+                user=pool.user,
                 target=target,
                 stage=stage,
                 error_type=type(exc).__name__,
                 elapsed_ms=round((loop.time() - started) * 1000, 3),
             )
             if not busy:
-                self._registration_failed()
+                self._registration_failed(pool)
             if carrier is not None and request_started and not reply_started:
                 try:
                     async with asyncio.timeout(self._options.reply_timeout):
@@ -373,6 +483,7 @@ class ReverseAgent:
                 logging.DEBUG,
                 "reverse_agent_resource_closed",
                 resource_id=resource_id,
+                user=pool.user,
                 target=target,
                 stage=stage,
                 reason=outcome,
@@ -415,8 +526,8 @@ class ReverseAgent:
                 await asyncio.gather(self._manager_task, return_exceptions=True)
             idle = {
                 task
-                for task, state in self._resources.items()
-                if state != "busy" and task is not initiator
+                for task, resource in self._resources.items()
+                if resource.state != "busy" and task is not initiator
             }
             for task in idle:
                 task.cancel()

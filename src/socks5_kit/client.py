@@ -1,4 +1,4 @@
-"""An importable no-auth SOCKS5 TCP client using exclusively owned raw sockets."""
+"""An importable SOCKS5 TCP client using exclusively owned raw sockets."""
 
 import asyncio
 import ipaddress
@@ -10,12 +10,13 @@ import time
 from dataclasses import dataclass
 from typing import Self
 
+from ._credentials import validate_credentials
 from ._io import read_exact, read_reply
 from ._linux.splice import SpliceRelay
 from ._logging import failure_level
 from .errors import ProtocolError
 from .models import BoundAddress, Target
-from .protocol import NO_AUTH, VERSION, encode_connect
+from .protocol import NO_AUTH, USERNAME_PASSWORD, VERSION, encode_connect
 
 logger = logging.getLogger(__name__)
 _client_ids = itertools.count(1)
@@ -107,14 +108,25 @@ class Socks5Client:
             sock.close()
             raise
 
-    async def connect(self, target: Target, *, initial_data: bytes = b"") -> TcpTunnel:
+    async def connect(
+        self,
+        target: Target,
+        *,
+        initial_data: bytes = b"",
+        credentials: tuple[str, str] | None = None,
+    ) -> TcpTunnel:
         """Open a tunnel, optionally pipelining payload with the CONNECT frame.
 
         ``initial_data`` is sent before the SOCKS reply and may reach the target
         before the proxy reports success. It is not replayed or acknowledged by
         this client. The returned socket retains all bytes after the reply.
+
+        ``credentials`` uses UTF-8 username/password authentication for this
+        connection only. Configured credentials never fall back to no-auth.
         """
-        tunnel, _relay = await self._connect(target, initial_data=initial_data)
+        tunnel, _relay = await self._connect(
+            target, initial_data=initial_data, credentials=credentials
+        )
         return tunnel
 
     async def _connect_pipelined(
@@ -122,12 +134,17 @@ class Socks5Client:
         target: Target,
         source: socket.socket,
         *,
+        credentials: tuple[str, str] | None = None,
         byte_budget: int = 256 * 1024,
         call_budget: int = 8,
     ) -> tuple[TcpTunnel, SpliceRelay]:
         """Reverse addon: stream payload before REP, leaving reverse splice paused."""
         tunnel, relay = await self._connect(
-            target, source=source, byte_budget=byte_budget, call_budget=call_budget
+            target,
+            source=source,
+            credentials=credentials,
+            byte_budget=byte_budget,
+            call_budget=call_budget,
         )
         assert relay is not None
         return tunnel, relay
@@ -138,6 +155,7 @@ class Socks5Client:
         *,
         initial_data: bytes = b"",
         source: socket.socket | None = None,
+        credentials: tuple[str, str] | None = None,
         byte_budget: int = 256 * 1024,
         call_budget: int = 8,
     ) -> tuple[TcpTunnel, SpliceRelay | None]:
@@ -145,6 +163,16 @@ class Socks5Client:
             raise TypeError("target must be a Target")
         if not isinstance(initial_data, bytes):
             raise TypeError("initial_data must be bytes")
+        credentials = validate_credentials(credentials)
+        if credentials is None:
+            method = NO_AUTH
+            auth_frame = None
+        else:
+            method = USERNAME_PASSWORD
+            username, password = (value.encode("utf-8") for value in credentials)
+            auth_frame = (
+                bytes([1, len(username)]) + username + bytes([len(password)]) + password
+            )
         loop = asyncio.get_running_loop()
         session_id = next(self._sequence)
         started = time.monotonic()
@@ -164,10 +192,23 @@ class Socks5Client:
             sock = await self._open_socket()
             async with asyncio.timeout(self.handshake_timeout):
                 stage = "method_negotiation"
-                await loop.sock_sendall(sock, bytes([VERSION, 1, NO_AUTH]))
-                version, method = await read_exact(sock, 2)
-                if version != VERSION or method != NO_AUTH:
-                    raise ProtocolError("upstream does not accept SOCKS5 no-auth")
+                await loop.sock_sendall(sock, bytes([VERSION, 1, method]))
+                version, selected_method = await read_exact(sock, 2)
+                if version != VERSION or selected_method != method:
+                    description = (
+                        "no-auth" if method == NO_AUTH else "username/password"
+                    )
+                    raise ProtocolError(
+                        f"upstream does not accept SOCKS5 {description}"
+                    )
+                if auth_frame is not None:
+                    stage = "authentication"
+                    await loop.sock_sendall(sock, auth_frame)
+                    auth_version, auth_status = await read_exact(sock, 2)
+                    if auth_version != 1 or auth_status != 0:
+                        raise ProtocolError(
+                            "upstream username/password authentication failed"
+                        )
                 if source is not None:
                     relay = SpliceRelay(
                         source, sock, byte_budget=byte_budget, call_budget=call_budget

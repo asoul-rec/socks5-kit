@@ -80,7 +80,7 @@ class ReverseServerOptions:
 
 @dataclass(frozen=True, slots=True)
 class ReverseAgentOptions:
-    """Idle pool target, total connection budget, and reconnect policy.
+    """Shared per-user pool limits and an optional Agent-wide connection budget.
 
     The connection budget includes resources being established, waiting for a
     request, connecting their target, and forwarding application data.
@@ -95,8 +95,11 @@ class ReverseAgentOptions:
     splice_byte_budget: int = 256 * 1024
     splice_call_budget: int = 8
     registration_timeout: float = 10.0
+    max_total_connections: int | None = None
 
     def __post_init__(self) -> None:
+        if self.max_total_connections is not None:
+            _positive_integer("max_total_connections", self.max_total_connections)
         for name in (
             "registration_timeout",
             "request_timeout",

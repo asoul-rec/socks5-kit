@@ -7,11 +7,13 @@
 
 - **SOCKS5 目标改写中继**：接收 IPv4、IPv6 或域名目标，由同步或异步 callback 改写为域名，
   经指定上游 SOCKS5 建连，随后通过双向 Linux `splice` / pipe 透传。入站用户名和密码交给 callback 决策。
-- **SOCKS5 客户端**：独立建立 TCP 隧道，支持三种地址类型、写半关闭，以及随 CONNECT 发送首段数据。
+- **SOCKS5 客户端**：独立建立 TCP 隧道，支持三种地址类型、可选用户名/密码认证、写半关闭，
+  以及随 CONNECT 发送首段数据。
 - **callback DNS 服务器**：支持 UDP/TCP 上的 A、AAAA 和 CNAME；可选上游 DNS 补查 CNAME 对应地址。
 - **reverse addon**：Agent 经现有代理预建反向 TCP 连接，Server 按 SOCKS5 username 分组、
   随机领取空闲资源，空池请求可有界排队并设置超时。HELLO/ACK 确认公网注册，
   预注册和业务请求共享 user slot 配额，每条连接使用一次，并在后台补池。
+  单个 Agent 可共用代理和目标配置，为多组本机 SOCKS 账户分别补池，并设置全局连接上限。
   取得资源后提前回复成功，流水发送 CONNECT 和业务数据，连接失败时关闭流。
 
 SOCKS5 目前仅支持 TCP CONNECT，不支持 BIND 和 UDP ASSOCIATE。

@@ -375,3 +375,27 @@ Agent 的池快照只保留在 DEBUG 决策事件中，正常成功保持 INFO�
 缺省字段不会残留，异常级别与策略拒绝区分，且仅启用 WARNING 时仍能看到 DNS 异常。
 全量 **810 passed，无跳过**，启用 asyncio debug、Python dev 模式、`-W error` 和 DEBUG 日志；
 Ruff、格式检查及离线 uv 源码包/wheel 构建通过。
+
+## 单 Agent 多用户资源池（2026-10-24）
+
+`ReverseAgent.users` 接收 `Sequence[None | str | tuple[str, str]]`，默认 `(None,)`。
+三种条目分别为无认证、用户名加空密码、用户名加密码。每个 user 独立预建、退避和补池，
+共用代理端点、注册目标及 options；`idle_connections` 与 `max_connections` 对每组生效，
+可选 `max_total_connections` 约束整个 Agent 的登记中、空闲及业务资源。
+总上限须能容纳全部组的目标空闲数，调度按组轮转预占名额，不跨组重置退避或分配业务。
+
+客户端新增每调用 `credentials`，在本机 SOCKS 的用户名密码子协商成功后才发送
+CONNECT 和首段内容；提供凭据时不接受降级到无认证。注册和业务出站都使用所属组凭据。
+这只改变本机 SOCKS 协商，不在 reverse HELLO/ACK 或 CONNECT/REP 中增加身份帧；
+公网 Server identity 仍须由中间代理配置保留或映射。
+
+新增 **52 项检查**：26 项客户端认证测试，覆盖默认无认证报文、严格方法选择、
+UTF-8 字节长度、空字段、错误/分片/合包认证回复、超时/取消回收和流水数据边界；
+26 项 Agent 多用户检查，使用同一个真实本机 SOCKS 代理和 ReverseServer 验证五种身份
+的注册、业务出站、数据与 EOF 不串线，覆盖无认证、字符串简写、显式密码、Unicode
+以及空用户名。另验证独立退避、per-user/global 上限覆盖登记与业务、轮转补建、
+参数预校验、组计数、关闭 FD 回收及密码不进入日志。
+
+原有单用户退避、注册 ACK、首包流水、资源配额和日志边界回归继续通过。
+全量 **862 passed，无跳过**，使用 asyncio debug、Python dev 模式、`-W error` 和 DEBUG 日志。
+Ruff、格式检查和离线 uv 构建通过，wheel 已确认包含新增认证模块。

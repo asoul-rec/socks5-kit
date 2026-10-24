@@ -47,6 +47,9 @@ Server 使用的是 **P_S → Server 这一跳**的 username；不推断 Agent �
 也不假设 Agent → P_C 的 SOCKS 账户或加密协议的用户会自动变成这个 username。
 这些身份如何映射，由 P_S 显式配置；注册流和相应业务流必须映射到相同的 user。
 Agent 可以始终通过无认证的本机 SOCKS 请求注册，完全不知道最后的 identity。
+也可用 `users=[None, ("team-a", "password")]` 为同一 Agent 配置多个本机 SOCKS 账户，
+分别建立资源。它们是 Agent → P_C 这一跳的凭据；P_C / P_S 仍须显式保留或映射身份，
+使不同组最后到达 Server 时使用对应的 user。addon 的 HELLO/CONNECT 不携带或转发用户名。
 SOCKS 出站账户配置参见 [Xray](https://xtls.github.io/config/outbounds/socks.html) 与
 [V2Fly](https://www.v2fly.org/config/protocols/socks.html)。
 因此公网侧必须使用保留 DOMAIN 目标的 **SOCKS5 出站**交给 addon；只做裸 TCP
@@ -89,6 +92,8 @@ username/password 字段格式来自 [RFC 1929](https://www.rfc-editor.org/rfc/r
 
 这里的 user 是分组元信息，不是 addon 认证。来源身份与访问权限由公网代理处理。
 账户字段不会再随反向 CONNECT 发给 Agent，也不会冒充内网业务 SOCKS 的凭据。
+Agent 收到业务时使用该资源所属组的本机账户连接业务目标，凭据来自它自己的 `users`
+配置，不是从 Server 的反向 CONNECT 中读取。
 
 | 最后一跳 SOCKS user | CONNECT 目标 | Server 行为 |
 | --- | --- | --- |
@@ -226,23 +231,30 @@ socket/pipe 的背压自然限制内存，单次调度仍受现有 splice 预算
 
 Agent 只需一个小的补池调度器，具体业务任务彼此独立。定义：
 
-- `idle_connections`：希望保持的待用资源数量，例如 1。
-- `max_connections`：本实例所有反向资源的总额度。
+- `idle_connections`：每个配置 user 希望保持的待用资源数量，例如 1。
+- `max_connections`：每个配置 user 的反向资源额度。
+- `max_total_connections`：本实例所有 user 合计的可选额度，默认 `None`，不增加全局限制。
 
-总额度包括 **正在建立（含等待 ACK）+ WAIT_CONNECT + 正在连接业务目标 + 正在转发**。
+每组和全局额度都包括 **正在建立（含等待 ACK）+ WAIT_CONNECT + 正在连接业务目标 + 正在转发**。
 每启动一个注册任务先占额度；失败/关闭时释放。对应的本机业务 SOCKS socket 是该资源
 所拥有的第二条 socket，不是另一个资源槽位。
 
 只有“待用 + 正在建立”不足目标值，且总额度未满时，才创建补充连接。
 收到反向 CONNECT、注册失败、空闲 EOF、业务完成都会触发检查。
 补建失败需要有上限退避并独立重试，不能只等下一条业务请求，否则池耗尽后无法自恢复。
-正常启动或消费资源时，调度器按额度并发补足缺口。进入退避后，每次到期只新建一条
+正常启动或消费资源时，调度器在每组和全局额度内补足缺口，以轮转顺序分配新的注册机会。
+各 user 的重试期限、失败退避和正在试探状态相互独立，一组失败不会暂停其他组的补池。
+某组进入退避后，每次到期只为该组新建一条
 注册连接；该连接完成 SOCKS/ACK 或失败前不再启动其他尝试。之前批次尚在建立的连接
-会继续完成，调度器等待它们的结果。收到任一有效注册 ACK 后才退出退避，恢复并发补池。
-已有连接上的业务 CONNECT 会唤醒调度器，但不会让注册重试绕过退避。
+会继续完成，调度器等待它们的结果。该组收到有效注册 ACK 后才退出退避，恢复并发补池；
+其他组的 ACK 不会重置它的退避。已有连接上的业务 CONNECT 会唤醒调度器，
+但不会让注册重试绕过退避。
 
 `idle_connections=1` 不意味着只能并发一个业务；不断补充可以产生多条活动连接。
-`max_connections=1` 才会使这个实例串行：资源占用期间不再补建，结束后才补。
+`max_connections=1` 才会使每组串行：该组资源占用期间不再补建，结束后才补。
+不设置全局上限时，N 个 user 最多各持有 `max_connections` 条资源。
+设置 `max_total_connections` 可限制这些组的合计，但不保留每组额外的业务名额；
+一组业务较多时可以占用其他组当前未使用的全局余量。
 限制 Agent 提供资源确实无需增加线协议；多个 Agent 的额度分别生效，不能自动当作
 某 user 的总额度。Server 用 slot 统一约束预注册连接和业务请求：
 
@@ -373,6 +385,33 @@ async def serve_agent() -> None:
         await agent.serve_forever()
 ```
 
+默认只有一个无认证组，等价于 `users=(None,)`。多个账户共用同一个 Agent 时：
+
+```python
+agent = ReverseAgent(
+    Target(DEFAULT_REVERSE_DOMAIN, 443),
+    Socks5Client("127.0.0.1", 1080),
+    users=[None, "alice", ("bob", "password")],
+    options=ReverseAgentOptions(
+        idle_connections=2,
+        max_connections=32,
+        max_total_connections=64,
+    ),
+)
+```
+
+`users` 是非空序列，每项为 `None`、username 字符串，或 `(username, password)` 字符串二元组。
+`None` 表示不提供认证；单个字符串等价于 `(username, "")`。字符串按 UTF-8 编码，
+username 和 password 各自最多 255 字节，允许空字符串；空 username 与 `None` 是不同组。
+同一个 username 只能出现一次，即使密码不同；`None` 也不能重复。
+不接受整个参数为 `None`、字符串、bytes 或生成器。构造时校验并保存不可变副本，
+后续修改传入列表不会改变运行中的配置。
+
+每组主动使用自己的凭据连接注册目标，并用同样的凭据连接业务目标。
+带凭据时只提供 `0x02` 方法；本机代理不接受认证或拒绝该账户就失败并重试注册，
+不自动改成无认证。默认 `None` 组仍只提供 `0x00`，行为与单组版本相同。
+上例希望保持 3 组各 2 条待用资源；每组上限 32 条，所有组合计上限 64 条。
+
 构造不做 I/O。Server 的 `start()` 开始监听，`start(port=0)` 后可读 `server.address`。
 Agent 的 `start()` 启动后台补池后立即返回，不等待本机或公网注册成功；
 调用方可查看 `agent.idle_connections > 0`，判断是否存在已获公网 ACK 的待用连接。
@@ -382,8 +421,10 @@ Agent 的 `start()` 启动后台补池后立即返回，不等待本机或公网
 对象必须在同一 asyncio 事件循环中使用，关闭后不能重启。
 
 Agent 的 `proxy` 用于注册和访问业务目标；可选 `egress_proxy=Socks5Client(...)`
-仅替换访问业务目标的本机入口。两者都只连接指定的 SOCKS 代理，绝不直接连接业务目标。
-Agent 不增加 identity 参数，由公网代理决定最终 SOCKS user。
+仅替换访问业务目标的本机入口，仍使用各资源所属组的凭据。
+所有 user 共用 `proxy`、`egress_proxy`、注册 `Target` 和 options；需要不同端点、目标或选项时，
+由调用方创建多个 Agent。两种入口都只连接指定的 SOCKS 代理，绝不直接连接业务目标。
+`users` 不会自动变成公网 identity，公网代理仍须显式配置最终 SOCKS user。
 Server 支持多个 user，但无需跨实例的 identity 注册表或 Agent 清单。
 
 ### 配置与计数
@@ -407,7 +448,10 @@ Server 支持多个 user，但无需跨实例的 identity 注册表或 Agent 清
 | `splice_byte_budget` | 262144 | 每方向单次调度的字节预算 |
 | `splice_call_budget` | 8 | 每方向单次调度的 splice 调用预算 |
 
-`ReverseAgentOptions` 默认 `idle_connections=1`、`max_connections=64`；
+`ReverseAgentOptions` 默认每组 `idle_connections=1`、`max_connections=64`，
+`max_total_connections=None`。若设置全局上限，必须是正整数，且至少为
+`len(users) * idle_connections`，保证配置中的各组目标空闲数合计可容纳；
+允许小于 `len(users) * max_connections`。
 补建失败退避从 `reconnect_initial_delay=0.1` 秒指数增长到 `reconnect_max_delay=5` 秒。
 这是失败后的重试等待时间，建连、SOCKS 和 ACK 的耗时另计；单纯连接数不足不会触发退避。
 有效 ACK 重置注册退避；正常状态收到 CONNECT 后立即补池，退避期间只唤醒调度检查。
@@ -416,7 +460,7 @@ Server 支持多个 user，但无需跨实例的 identity 注册表或 Agent 清
 首字节开始计算，只限制剩余请求帧，不限制等待业务的空闲时间；`reply_timeout=5` 秒。
 访问本机代理的建连和握手期限由传入的 `Socks5Client` 配置，各默认 10 秒。
 splice 两项预算与 Server 相同。数量须为正整数，超时须为有限正数，
-Agent 的目标空闲数不能超过总额，最大退避不能小于初始退避。
+Agent 每组的目标空闲数不能超过该组总额，最大退避不能小于初始退避。
 
 Server 可读 `active_connections`（所有接入 socket）、`resource_count`（所有注册资源）、
 `idle_connections`（所有组空闲资源）、`idle_count(user)`（指定原始 username 的空闲数），
@@ -427,6 +471,9 @@ Server 可读 `active_connections`（所有接入 socket）、`resource_count`�
 `idle_count()` 只查询默认 `None` 组，不是所有组的合计。
 Agent 可读 `connection_count`（所有反向资源）、`idle_connections`（已获公网 ACK、等待 CONNECT 的资源）、
 `active_connections`（已收到完整 CONNECT、正在建业务连接或透传的资源）。
+这些属性为所有组的合计；`connection_count_for(user)`、`idle_count(user)`、`active_count(user)`
+查询单个配置组，参数为 username 字符串或 `None`，未知组返回 0。
+不传参数查询默认 `None` 组，空字符串组需显式传 `""`。
 两侧计数不要求在每个瞬间相等：ACK 传播、领取、断连检测会造成短暂差异。
 
 正常注册、业务请求、排队、资源领取及目标代理成功均有 INFO 访问日志；
@@ -447,11 +494,13 @@ DEBUG 另外记录补池决策、等待 ACK、退避和连接预算限制。
 5. 空闲 EOF、领取瞬间断连、黑洞超时、不重发已经提交的 CONNECT、取消和 FD/pipe 回收。
 6. 同 user 的多个资源、随机领取、掉线资源剔除、其余资源继续接收新请求；
    全实例/每 user 额度与空组回收。
+   单 Agent 多组分别认证注册和访问目标，独立退避、轮转补池，以及每组/全局资源上限。
 7. 多 MiB 业务内容及 EOF 在协商回复之前到达、双向半关闭、目标先发 banner，
    以及池满、失败、取消时的 socket/pipe 回收；控制帧不混入业务数据。
 
 固定版本 Xray/V2Fly 的真实双侧代理拓扑、测试结果及复现方式见 [验证记录](validation.md)。
 代理联调与模块测试分开记录；代理不支持的行为不会被模块的回环测试代替。
 
-addon 只收集 SOCKS 账户元信息并按同 user 的空闲资源分流，不验证账户、不增加身份认证。
+Server addon 只收集 SOCKS 账户元信息并按同 user 的空闲资源分流，不验证账户。
+Agent 可使用配置的凭据向本机 SOCKS 代理认证；HELLO/ACK 本身不增加身份认证。
 UDP、mux、Agent 权重/负载调度协议、活动连接迁移、UI 和自动修改代理配置均不在范围内。

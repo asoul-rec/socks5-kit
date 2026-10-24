@@ -1,6 +1,6 @@
 # SOCKS5 目标改写中继架构
 
-更新：2026-10-08。TCP 与入站凭据收集已实现；UDP 保留契约，暂不实现。
+更新：2026-10-24。TCP、入站凭据收集和可选的客户端认证已实现；UDP 保留契约，暂不实现。
 当前可调用 API 和使用示例见 [README](../README.md)。
 
 ## 1. 范围与原则
@@ -50,6 +50,11 @@ M 对 A 发出完整的全零 BND 失败回复。
 
 `Socks5Client(ip, port, *, connect_timeout=10, handshake_timeout=10)` 是可独立使用的客户端。
 `await connect(Target)` 创建一个独占隧道，支持三个 ATYP，失败时回收 socket。
+可传 `credentials=(username, password)`，两者为 UTF-8 字符串，各自编码后最多 255 字节，
+允许空字符串；该请求只提供用户名/密码方法 `0x02`，校验子协商成功后才发送 CONNECT。
+未提供凭据或 `credentials=None` 时只提供无认证方法 `0x00`。不在认证失败后降级到无认证。
+凭据按每次调用指定，不保存在共享客户端端点中；`initial_data` 可与凭据一起使用，
+仍在认证完成后紧接 CONNECT 发送，不等待 CONNECT 的成功回复。
 `TcpTunnel` 提供 raw socket、`bound_address`、收发、写半关闭、同步/异步关闭和异步上下文。
 它不封装 asyncio transport 或 StreamReader，避免 payload 被预读至用户态。
 
